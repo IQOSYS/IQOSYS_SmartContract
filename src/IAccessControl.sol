@@ -40,4 +40,7 @@ interface IAccessControl {
     /// @notice Returns the whitelist of addresses
     function getWhiteList() external view returns (address[] memory);
 
+    // --- AJOUT POUR RÉSOUDRE L'ERREUR ---
+    /// @notice Checks whether an address is an admin (Validator FIAT)
+    function isAdmin(address account) external view returns (bool);
 }

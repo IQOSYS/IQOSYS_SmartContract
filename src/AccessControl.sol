@@ -7,30 +7,37 @@ import "@openzeppelin/contracts/metatx/ERC2771Context.sol";
 import "./IAccessControl.sol";
 
 /// @title Access Control Module
-/// @notice Manages owner, authorized addresses, whitelist and frozen accounts
+/// @notice Manages owner, authorized addresses, admins, whitelist and frozen accounts
 contract AccessControl is Ownable, IAccessControl, ERC2771Context {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     EnumerableSet.AddressSet private iqosysWhiteList;
     mapping(address => bool) private authorizedAddresses;
     mapping(address => bool) private frozenAddresses;
+    
+    // --- NOUVEAU : Mapping pour les administrateurs (Validateurs FIAT) ---
+    mapping(address => bool) private admins;
 
     event AuthorizationUpdated(address indexed account, bool isAuthorized);
     event WhiteListed(address indexed account, bool status);
     event AddressFrozen(address indexed account, bool isFrozen);
+    event AdminUpdated(address indexed account, bool isAdmin);
 
     /**
      * @notice Initialise le module avec le propriétaire et le relais de gas
      * @param initialOwner L'adresse de l'administrateur
-     * @param forwarder L'adresse du contrat MinimalForwarder
+     * @param forwarder L'adresse du contrat Trusted Forwarder
      */
     constructor(address initialOwner, address forwarder) 
         Ownable(msg.sender) 
         ERC2771Context(forwarder) 
     {
         _transferOwnership(initialOwner);
+        // Le propriétaire est admin par défaut pour la configuration initiale
+        admins[initialOwner] = true;
         authorizedAddresses[initialOwner] = true;
         iqosysWhiteList.add(initialOwner);
+        emit AdminUpdated(initialOwner, true);
     }
 
     // --- RÉSOLUTION DES CONFLITS D'HÉRITAGE (CONTEXT) ---
@@ -47,7 +54,32 @@ contract AccessControl is Ownable, IAccessControl, ERC2771Context {
         return ERC2771Context._contextSuffixLength();
     }
 
-    // --- LOGIQUE MÉTIER ---
+    // --- LOGIQUE MÉTIER : GESTION DES ADMINS ---
+
+    /**
+     * @notice Ajoute un administrateur capable de valider les flux FIAT
+     */
+    function addAdmin(address account) external onlyOwner {
+        admins[account] = true;
+        emit AdminUpdated(account, true);
+    }
+
+    /**
+     * @notice Retire les droits d'administration
+     */
+    function removeAdmin(address account) external onlyOwner {
+        admins[account] = false;
+        emit AdminUpdated(account, false);
+    }
+
+    /**
+     * @notice Vérifie si une adresse est un administrateur/validateur
+     */
+    function isAdmin(address account) public view  returns (bool) {
+        return admins[account];
+    }
+
+    // --- LOGIQUE MÉTIER : STANDARDS ---
 
     function owner() public view override(Ownable, IAccessControl) returns (address) {
         return Ownable.owner();
@@ -100,9 +132,9 @@ contract AccessControl is Ownable, IAccessControl, ERC2771Context {
     }
 
     function onlyValidSender(address account) external view override returns (bool) {
-        require(this.isWhiteListed(account), "Sender not white-listed");
-        require(this.isAuthorized(account), "Sender not authorized");
-        require(!this.isFrozen(account), "Sender is frozen");
+        require(iqosysWhiteList.contains(account), "Sender not white-listed");
+        require(authorizedAddresses[account], "Sender not authorized");
+        require(!frozenAddresses[account], "Sender is frozen");
         return true;
     }
 

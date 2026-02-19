@@ -6,8 +6,6 @@ import "./IAccessControl.sol";
 import "./ITokenManager.sol";
 import "@openzeppelin/contracts/metatx/ERC2771Context.sol";
 
-/// @title Order Book Module
-/// @notice Manages pending and validated sell & buy orders with escrow
 contract OrderBookModule is IOrderBookModule, ERC2771Context {
     IAccessControl public accessControl;
     ITokenManager public tokenManager;
@@ -34,7 +32,6 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
     event PendingBuyOrderCanceled(uint256 indexed id, address indexed buyer);
     event BuyOrderCanceled(uint256 indexed id, address indexed buyer);
 
-
     modifier onlyValidSender() {
         address sender = _msgSender();
         require(accessControl.isWhiteListed(sender), "Sender not whitelisted");
@@ -43,6 +40,10 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
         _;
     }
 
+    modifier onlyAdmin() {
+        require(accessControl.isAdmin(_msgSender()), "Caller is not an admin");
+        _;
+    }
 
     constructor(
         address _accessControl, 
@@ -53,14 +54,12 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
         tokenManager = ITokenManager(_tokenManager);
     }
 
-
     // --- Sell Orders ---
     function proposeSellOrder(uint256 amount, uint256 price, bool isIQS) external override onlyValidSender {
-        address sender = _msgSender(); // Capture du vrai sender
+        address sender = _msgSender();
 
         require(amount > 0, "Amount must be > 0");
         require(price  > 0, "Price must be > 0");
-
 
         if (isIQS) {
             require(tokenManager.balanceOfIQS(sender) >= amount, "Insufficient IQS balance");
@@ -70,7 +69,6 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
             tokenManager.transferOSTfromAtoB(sender, accessControl.owner(), amount);
         }
 
-        // Création de l’ordre en attente
         uint256 id = nextSellId++;
         PendingSellOrders[id] = PendingSellOrder({
             id:        id,
@@ -84,9 +82,7 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
         emit PendingSellOrderCreated(id, sender, amount, price, isIQS, block.timestamp);
     }
 
-    function validatePendingSellOrder(uint256 id) external override {
-        require(_msgSender() == accessControl.owner(), "Only owner");
-        
+    function validatePendingSellOrder(uint256 id) external override onlyAdmin {
         PendingSellOrder storage p = PendingSellOrders[id];
         require(p.seller != address(0), "No such pending order");
 
@@ -98,29 +94,16 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
             isIQS:     p.isIQS,
             timestamp: p.timestamp
         });
-        emit SellOrderValidated(
-            nextSellOrderId, 
-            p.seller, 
-            p.amount, 
-            p.price, 
-            p.isIQS, 
-            p.timestamp
-        );
+        emit SellOrderValidated(nextSellOrderId, p.seller, p.amount, p.price, p.isIQS, p.timestamp);
         nextSellOrderId++;
 
-        // Supprimer l’ordre en attente
         delete PendingSellOrders[id];
     }
 
-
-
-    function rejectPendingSellOrder(uint256 id) external override {
-        require(_msgSender() == accessControl.owner(), "Only owner");
-
+    function rejectPendingSellOrder(uint256 id) external override onlyAdmin {
         PendingSellOrder storage p = PendingSellOrders[id];
         require(p.seller != address(0), "No such pending order");
 
-        // Restituer l’escrow
         if (p.isIQS) {
             require(tokenManager.balanceOfIQS(accessControl.owner()) >= p.amount, "Escrow IQS insufficient");
             tokenManager.transferIQSfromAtoB(accessControl.owner(), p.seller, p.amount);
@@ -133,14 +116,11 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
         delete PendingSellOrders[id];
     }
 
-
     function cancelPendingSellOrder(uint256 id) external override onlyValidSender {
         address sender = _msgSender(); 
-
         PendingSellOrder storage p = PendingSellOrders[id];
         require(p.seller == sender, "Not your order");
 
-        // Restituer l’escrow
         if (p.isIQS) {
             require(tokenManager.balanceOfIQS(accessControl.owner()) >= p.amount, "Escrow IQS insufficient");
             tokenManager.transferIQSfromAtoB(accessControl.owner(), sender, p.amount);
@@ -153,14 +133,11 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
         delete PendingSellOrders[id];
     }
 
-
     function cancelSellOrder(uint256 id) external override onlyValidSender {
         address sender = _msgSender(); 
-
         SellOrder storage o = sellOrders[id];
         require(o.seller == sender, "Not your order");
 
-        // Restitution de l’escrow au vendeur
         if (o.isIQS) {
             require(tokenManager.balanceOfIQS(accessControl.owner()) >= o.amount, "Escrow IQS insufficient");
             tokenManager.transferIQSfromAtoB(accessControl.owner(), sender, o.amount);
@@ -173,13 +150,10 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
         delete sellOrders[id];
     }
 
-    function adminCancelSellOrder(uint256 id) external override {
-        require(_msgSender() == accessControl.owner(), "Only owner");
-        
+    function adminCancelSellOrder(uint256 id) external override onlyAdmin {
         SellOrder storage o = sellOrders[id];
         require(o.seller != address(0), "No such order");
 
-        // Restitution de l’escrow au vendeur
         if (o.isIQS) {
             require(tokenManager.balanceOfIQS(accessControl.owner()) >= o.amount, "Escrow IQS insufficient");
             tokenManager.transferIQSfromAtoB(accessControl.owner(), o.seller, o.amount);
@@ -192,24 +166,8 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
         delete sellOrders[id];
     }
 
-    function deleteSellOrder(uint256 id) external {
+    function deleteSellOrder(uint256 id) external override {
         delete sellOrders[id];
-    }
-
-    function PendingSellOrdersf(uint256 id) external view override returns (PendingSellOrder memory) {
-        return PendingSellOrders[id];
-    }
-
-    function sellOrdersf(uint256 id) external view returns (SellOrder memory) {
-        return sellOrders[id];
-    }
-
-    function nextSellIdf() external view override returns (uint256) {
-        return nextSellId;
-    }
-
-    function nextSellOrderIdf() external view override returns (uint256) {
-        return nextSellOrderId;
     }
 
     // --- Buy Orders ---
@@ -232,8 +190,7 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
         emit PendingBuyOrderCreated(id, sender, amount, price, isIQS, block.timestamp);
     }
 
-    function validatePendingBuyOrder(uint256 id) external override {
-        require(_msgSender() == accessControl.owner(), "Only owner");
+    function validatePendingBuyOrder(uint256 id) external override onlyAdmin {
         PendingBuyOrder storage p = PendingBuyOrders[id];
         require(p.buyer != address(0), "No such pending order");
 
@@ -246,21 +203,12 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
             timestamp: p.timestamp
         });
 
-        emit BuyOrderValidated(
-            nextBuyOrderId,
-            p.buyer,
-            p.amount,
-            p.price,
-            p.isIQS,
-            p.timestamp
-        );
-
+        emit BuyOrderValidated(nextBuyOrderId, p.buyer, p.amount, p.price, p.isIQS, p.timestamp);
         nextBuyOrderId++;
         delete PendingBuyOrders[id];
     }
 
-    function rejectPendingBuyOrder(uint256 id) external override {
-        require(_msgSender() == accessControl.owner(), "Only owner");
+    function rejectPendingBuyOrder(uint256 id) external override onlyAdmin {
         PendingBuyOrder storage p = PendingBuyOrders[id];
         require(p.buyer != address(0), "No such pending order");
 
@@ -285,43 +233,29 @@ contract OrderBookModule is IOrderBookModule, ERC2771Context {
         delete buyOrders[id];
     }
 
-    function adminCancelBuyOrder(uint256 id) external override {
+    function adminCancelBuyOrder(uint256 id) external override onlyAdmin {
         BuyOrder storage o = buyOrders[id];
         require(o.buyer != address(0), "No such order");
         emit BuyOrderCanceled(id, o.buyer);
         delete buyOrders[id];
     }
 
-    function deleteBuyOrder(uint256 id) external {
+    function deleteBuyOrder(uint256 id) external override {
         delete buyOrders[id];
     }
 
-    function PendingBuyOrdersf(uint256 id) external view  returns (PendingBuyOrder memory) {
-        return PendingBuyOrders[id];
-    }
+    // --- GETTERS ---
+    function PendingSellOrdersf(uint256 id) external view override returns (PendingSellOrder memory) { return PendingSellOrders[id]; }
+    function sellOrdersf(uint256 id) external view override returns (SellOrder memory) { return sellOrders[id]; }
+    function nextSellIdf() external view override returns (uint256) { return nextSellId; }
+    function nextSellOrderIdf() external view override returns (uint256) { return nextSellOrderId; }
 
-    function buyOrdersf(uint256 id) external view  returns (BuyOrder memory) {
-        return buyOrders[id];
-    }
+    function PendingBuyOrdersf(uint256 id) external view override returns (PendingBuyOrder memory) { return PendingBuyOrders[id]; }
+    function buyOrdersf(uint256 id) external view override returns (BuyOrder memory) { return buyOrders[id]; }
+    function nextBuyIdf() external view override returns (uint256) { return nextBuyId; }
+    function nextBuyOrderIdf() external view override returns (uint256) { return nextBuyOrderId; }
 
-    function nextBuyIdf() external view  returns (uint256) {
-        return nextBuyId;
-    }
-
-    function nextBuyOrderIdf() external view  returns (uint256) {
-        return nextBuyOrderId;
-    }
-
-    
-    function _msgSender() internal view override(ERC2771Context) returns (address) {
-        return ERC2771Context._msgSender();
-    }
-
-    function _msgData() internal view override(ERC2771Context) returns (bytes calldata) {
-        return ERC2771Context._msgData();
-    }
-
-    function _contextSuffixLength() internal view override(ERC2771Context) returns (uint256) {
-        return ERC2771Context._contextSuffixLength();
-    }
+    function _msgSender() internal view override(ERC2771Context) returns (address) { return ERC2771Context._msgSender(); }
+    function _msgData() internal view override(ERC2771Context) returns (bytes calldata) { return ERC2771Context._msgData(); }
+    function _contextSuffixLength() internal view override(ERC2771Context) returns (uint256) { return ERC2771Context._contextSuffixLength(); }
 }

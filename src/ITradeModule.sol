@@ -28,18 +28,28 @@ interface ITradeModule {
         uint256 timestamp;
     }
 
+    // --- EXECUTION STANDARD (On-chain) ---
     /// @notice Executes a trade by filling a sell order
     function OrderSellFill(uint256 sellOrderId) external;
 
     /// @notice Executes a trade by filling a buy order
     function OrderBuyFill(uint256 buyOrderId) external;
 
-    /// @notice Validates an executed trade (owner only)
+    // --- EXECUTION ADMINISTRATIVE (Flux FIAT Web2) ---
+    /// @notice Allows Admin to fill a sell order on behalf of a specific buyer
+    function adminOrderSellFill(uint256 sellOrderId, address intendedBuyer) external;
+
+    /// @notice Allows Admin to fill a buy order on behalf of a specific seller
+    function adminOrderBuyFill(uint256 buyOrderId, address intendedSeller) external;
+
+    // --- VALIDATION / REJET ---
+    /// @notice Validates an executed trade (owner/admin only)
     function validateExecutedTrade(uint256 executedTradeId) external;
 
-    /// @notice Rejects an executed trade (owner only)
+    /// @notice Rejects an executed trade (owner/admin only)
     function rejectExecutedTrade(uint256 executedTradeId) external;
 
+    // --- GETTERS ---
     /// @notice Returns an executed trade by id
     function executedTradesf(uint256 id) external view returns (ExecutedTrade memory);
 

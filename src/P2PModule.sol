@@ -7,7 +7,7 @@ import "./ITokenManager.sol";
 import "@openzeppelin/contracts/metatx/ERC2771Context.sol"; 
 
 /// @title P2P Transactions Module
-/// @notice Manages peer-to-peer token transactions with escrow and confirmations
+/// @notice Manages peer-to-peer token transactions with escrow and administrative validation
 contract P2PModule is IP2PModule, ERC2771Context {
     IAccessControl public accessControl;
     ITokenManager public tokenManager;
@@ -58,6 +58,8 @@ contract P2PModule is IP2PModule, ERC2771Context {
         tokenManager = ITokenManager(_tokenManager);
     }
 
+    // --- MODIFIERS ---
+
     modifier onlyValidSender() {
         address sender = _msgSender();
         require(accessControl.isWhiteListed(sender), "Sender not whitelisted");
@@ -66,13 +68,20 @@ contract P2PModule is IP2PModule, ERC2771Context {
         _;
     }
 
+    // CHANGEMENT : Utilise désormais isAdmin() au lieu de owner()
+    modifier onlyAdmin() {
+        require(accessControl.isAdmin(_msgSender()), "Caller is not an admin");
+        _;
+    }
+
+    // --- CORE FUNCTIONS ---
+
     /// @inheritdoc IP2PModule
     function proposeP2PTransaction(address to, uint256 amount, uint256 price, bool isIQS) external override onlyValidSender {
         address sender = _msgSender();
 
         require(to != address(0), "Invalid recipient");
         require(amount > 0 && price > 0, "Amount and price > 0");
-
 
         if (isIQS) {
             tokenManager.transferIQSfromAtoB(sender, accessControl.owner(), amount);
@@ -116,50 +125,48 @@ contract P2PModule is IP2PModule, ERC2771Context {
     }
 
     /// @inheritdoc IP2PModule
-    function cancelP2PTransaction(
-        uint256 id
-    ) external override onlyValidSender {
+    function cancelP2PTransaction(uint256 id) external override onlyValidSender {
         address sender = _msgSender(); 
 
         PendingP2PTransaction storage txp = pendingP2PTransactions[id];
         require(txp.from != address(0), "No such P2P transaction");
-        require(
-            sender == txp.from || sender == txp.to,
-            "Not a participant"
-        );
-
+        require(sender == txp.from || sender == txp.to, "Not a participant");
 
         if (txp.isIQS) {
-            tokenManager.transferIQSfromAtoB(
-                accessControl.owner(),
-                txp.from,
-                txp.amount
-            );
+            tokenManager.transferIQSfromAtoB(accessControl.owner(), txp.from, txp.amount);
         } else {
-            tokenManager.transferOSTfromAtoB(
-                accessControl.owner(),
-                txp.from,
-                txp.amount
-            );
+            tokenManager.transferOSTfromAtoB(accessControl.owner(), txp.from, txp.amount);
         }
 
         emit PendingP2PTransactionCanceled(id, sender);
         delete pendingP2PTransactions[id];
     }
 
-    
-
     /// @inheritdoc IP2PModule
+    /// @dev Validation standard (les deux parties doivent avoir confirmé)
     function validateP2PTransaction(uint256 id) external override {
-
-        
         PendingP2PTransaction storage txp = pendingP2PTransactions[id];
         require(txp.from != address(0), "No such P2P transaction");
 
         P2PConfirmations storage c = p2pConfirmations[id];
         require(c.fromConfirmed && c.toConfirmed, "Both must confirm first");
 
+        _executeTransferAndCleanup(id, txp);
+    }
 
+    /**
+     * @notice SOLUTION FLUX FIAT : Validation par l'administrateur
+     * @dev Permet à l'admin de libérer les tokens du séquestre sans attendre la signature on-chain de l'acheteur.
+     */
+    function adminValidateP2PTransaction(uint256 id) external onlyAdmin {
+        PendingP2PTransaction storage txp = pendingP2PTransactions[id];
+        require(txp.from != address(0), "No such P2P transaction");
+
+        _executeTransferAndCleanup(id, txp);
+    }
+
+    /// @dev Helper interne pour le transfert et l'archivage
+    function _executeTransferAndCleanup(uint256 id, PendingP2PTransaction storage txp) internal {
         if (txp.isIQS) {
             require(tokenManager.balanceOfIQS(accessControl.owner()) >= txp.amount, "Escrow IQS insufficient");
             tokenManager.transferIQSfromAtoB(accessControl.owner(), txp.to, txp.amount);
@@ -180,29 +187,19 @@ contract P2PModule is IP2PModule, ERC2771Context {
             isIQS:     txp.isIQS,
             timestamp: txp.timestamp
         });
-        emit PendingP2PTransactionValidated(
-            nextValidatedP2PId,
-            txp.from,
-            txp.to,
-            txp.amount,
-            txp.price,
-            txp.isIQS,
-            txp.timestamp
-        );
+        
+        emit PendingP2PTransactionValidated(nextValidatedP2PId, txp.from, txp.to, txp.amount, txp.price, txp.isIQS, txp.timestamp);
         nextValidatedP2PId++;
 
         // Cleanup
         delete pendingP2PTransactions[id];
-        delete p2pConfirmations[id];       
+        delete p2pConfirmations[id];
     }
 
     /// @inheritdoc IP2PModule
     function rejectP2PTransaction(uint256 id) external override {
-
-        
         PendingP2PTransaction storage txp = pendingP2PTransactions[id];
         require(txp.from != address(0), "No such P2P transaction");
-
 
         if (txp.isIQS) {
             require(tokenManager.balanceOfIQS(accessControl.owner()) >= txp.amount, "Escrow IQS insufficient");
@@ -216,111 +213,43 @@ contract P2PModule is IP2PModule, ERC2771Context {
         delete pendingP2PTransactions[id];
     }
 
+    // --- VIEW FUNCTIONS ---
 
-
-    /// @inheritdoc IP2PModule
-    function getValidatedP2PTransactions()
-        external
-        view
-        returns (
-            uint256[] memory ids,
-            address[] memory froms,
-            address[] memory tos,
-            uint256[] memory amounts,
-            uint256[] memory prices,
-            bool[]    memory isIQSFlags,
-            uint256[] memory timestamps
-        )
-    {
+    function getValidatedP2PTransactions() external view returns (uint256[] memory ids, address[] memory froms, address[] memory tos, uint256[] memory amounts, uint256[] memory prices, bool[] memory isIQSFlags, uint256[] memory timestamps) {
         uint256 total = nextValidatedP2PId;
-        ids         = new uint256[](total);
-        froms       = new address[](total);
-        tos         = new address[](total);
-        amounts     = new uint256[](total);
-        prices      = new uint256[](total);
-        isIQSFlags  = new bool[](total);
-        timestamps  = new uint256[](total);
-
+        ids = new uint256[](total); froms = new address[](total); tos = new address[](total); amounts = new uint256[](total); prices = new uint256[](total); isIQSFlags = new bool[](total); timestamps = new uint256[](total);
         for (uint256 i = 0; i < total; i++) {
             PendingP2PTransaction storage txp = validatedP2PTransactions[i];
-            ids[i]         = txp.id;
-            froms[i]       = txp.from;
-            tos[i]         = txp.to;
-            amounts[i]     = txp.amount;
-            prices[i]      = txp.price;
-            isIQSFlags[i]  = txp.isIQS;
-            timestamps[i]  = txp.timestamp;
+            ids[i] = txp.id; froms[i] = txp.from; tos[i] = txp.to; amounts[i] = txp.amount; prices[i] = txp.price; isIQSFlags[i] = txp.isIQS; timestamps[i] = txp.timestamp;
         }
     }
-    
 
-    /// @inheritdoc IP2PModule
-    function getUserValidatedP2PTransactions(address user)
-        external
-        view
-        returns (
-            uint256[] memory ids,
-            address[] memory froms,
-            address[] memory tos,
-            uint256[] memory amounts,
-            uint256[] memory prices,
-            bool[]    memory isIQSFlags,
-            uint256[] memory timestamps
-        )
-    {
-        uint256 total = nextValidatedP2PId;
-        uint256 count = 0;
-
-        // 1) Comptage
-        for (uint256 i = 0; i < total; i++) {
-            PendingP2PTransaction storage txp = validatedP2PTransactions[i];
-            if (txp.from == user || txp.to == user) {
-                count++;
-            }
-        }
-
-        // 2) Allocation
-        ids         = new uint256[](count);
-        froms       = new address[](count);
-        tos         = new address[](count);
-        amounts     = new uint256[](count);
-        prices      = new uint256[](count);
-        isIQSFlags  = new bool[](count);
-        timestamps  = new uint256[](count);
-
-        // 3) Remplissage
+    function getUserValidatedP2PTransactions(address user) external view returns (uint256[] memory ids, address[] memory froms, address[] memory tos, uint256[] memory amounts, uint256[] memory prices, bool[] memory isIQSFlags, uint256[] memory timestamps) {
+        uint256 total = nextValidatedP2PId; uint256 count = 0;
+        for (uint256 i = 0; i < total; i++) { if (validatedP2PTransactions[i].from == user || validatedP2PTransactions[i].to == user) count++; }
+        ids = new uint256[](count); froms = new address[](count); tos = new address[](count); amounts = new uint256[](count); prices = new uint256[](count); isIQSFlags = new bool[](count); timestamps = new uint256[](count);
         uint256 idx = 0;
         for (uint256 i = 0; i < total; i++) {
             PendingP2PTransaction storage txp = validatedP2PTransactions[i];
             if (txp.from == user || txp.to == user) {
-                ids[idx]         = txp.id;
-                froms[idx]       = txp.from;
-                tos[idx]         = txp.to;
-                amounts[idx]     = txp.amount;
-                prices[idx]      = txp.price;
-                isIQSFlags[idx]  = txp.isIQS;
-                timestamps[idx]  = txp.timestamp;
-                idx++;
+                ids[idx] = txp.id; froms[idx] = txp.from; tos[idx] = txp.to; amounts[idx] = txp.amount; prices[idx] = txp.price; isIQSFlags[idx] = txp.isIQS; timestamps[idx] = txp.timestamp; idx++;
             }
         }
     }
 
-    /// @inheritdoc IP2PModule
     function getTransactionHistoryLengthP2P() public view returns (uint256) {
-        return nextValidatedP2PId - 1; 
+        return nextValidatedP2PId > 0 ? nextValidatedP2PId - 1 : 0; 
     }
 
-    /// @inheritdoc IP2PModule
     function pendingP2PCost(uint256 id) external view override returns (uint256) {
         PendingP2PTransaction storage txp = pendingP2PTransactions[id];
         require(txp.from != address(0), "No such pending P2P");
-
         uint256 baseCost = txp.amount * txp.price;
         uint256 pct = (baseCost * tokenManager.transactionFeeRatef()) / 100;
         return baseCost + pct + tokenManager.transactionFeef();
     }
 
-
+    // --- ERC2771 OVERRIDES ---
 
     function _msgSender() internal view override(ERC2771Context) returns (address) {
         return ERC2771Context._msgSender();

@@ -1653,6 +1653,59 @@ contract IQOSTest is Test {
         dao.getResults(42);
     }
 
+    // --- NOUVEAUX TESTS : FLUX FIAT (ADMIN) ---
+
+    function testAdminValidateP2PTransaction() public {
+        _setupP2PUser(alice, 50, 0); // Alice a 50 IQS
+        _setupP2PUser(bob, 0, 0);
+
+        // Alice propose 20 IQS à Bob
+        vm.prank(alice);
+        p2pModule.proposeP2PTransaction(bob, 20, 5, true);
+
+        // L'Admin valide DIRECTEMENT sans attendre que Bob confirme
+        vm.prank(owner);
+        p2pModule.adminValidateP2PTransaction(0);
+
+        // Vérification : Bob a bien reçu les tokens
+        assertEq(tokenManager.balanceOfIQS(bob), 20, unicode"Bob aurait dû recevoir les 20 IQS via l'Admin");
+        assertEq(tokenManager.balanceOfIQS(owner), 0, unicode"L'escrow devrait être vide");
+    }
+
+    function testAdminOrderSellFill() public {
+        _setupSellOrder(alice, 100); // Alice vend 10 IQS (prix 5)
+        
+        // Setup Bob (l'acheteur FIAT)
+        vm.prank(owner); accessControl.authorizeAddress(bob);
+        vm.prank(owner); accessControl.addToWhiteList(bob);
+
+        // L'admin execute le Fill AU NOM de Bob
+        vm.prank(owner);
+        tradeModule.adminOrderSellFill(0, bob);
+
+        // Vérification : L'ordre a été exécuté avec Bob comme acheteur (et non l'admin)
+        (,,,, address executedBuyer,,,,) = tradeModule.executedTrades(0);
+        assertEq(executedBuyer, bob, unicode"L'acheteur enregistré doit être Bob, pas l'Admin");
+    }
+
+    function testAdminOrderBuyFill() public {
+        _setupBuyOrder(bob, 50); // Bob veut acheter (Escrow de 50 OST)
+        
+        // Setup Alice (le vendeur FIAT)
+        vm.prank(owner); tokenManager.setBalanceForTesting(alice, 0, 10);
+        vm.prank(owner); accessControl.authorizeAddress(alice);
+        vm.prank(owner); accessControl.addToWhiteList(alice);
+
+        // L'admin execute le Fill AU NOM d'Alice
+        vm.prank(owner);
+        tradeModule.adminOrderBuyFill(0, alice);
+
+        // Vérification : L'ordre a été exécuté avec Alice comme vendeur
+        (,,, address executedSeller,,,,,) = tradeModule.executedTrades(0);
+        assertEq(executedSeller, alice, unicode"Le vendeur enregistré doit être Alice, pas l'Admin");
+    }
+    
+
     
 
 }

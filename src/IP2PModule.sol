@@ -14,7 +14,6 @@ interface IP2PModule {
         uint256 timestamp;
     }
 
-
     /// @notice Proposes a P2P transaction, escrow tokens
     function proposeP2PTransaction(address to, uint256 amount, uint256 price, bool isIQS) external;
 
@@ -24,16 +23,20 @@ interface IP2PModule {
     /// @notice Cancels a pending P2P transaction
     function cancelP2PTransaction(uint256 id) external;
 
-    /// @notice Validates a fully confirmed P2P transaction (owner only)
+    /// @notice Validates a fully confirmed P2P transaction (requires both parties confirmed)
     function validateP2PTransaction(uint256 id) external;
+
+    // --- AJOUT POUR LE FLUX FIAT ---
+    /// @notice Validates a P2P transaction by an administrator (bypasses user confirmation)
+    function adminValidateP2PTransaction(uint256 id) external;
 
     /// @notice Rejects a P2P transaction (owner only)
     function rejectP2PTransaction(uint256 id) external;
 
-    /// @notice Returns a pending P2P transaction by id
+    /// @notice Returns the length of the validated P2P history
     function getTransactionHistoryLengthP2P() external view returns (uint256);
 
-    /// @notice Returns a all P2P transactions
+    /// @notice Returns all validated P2P transactions
     function getValidatedP2PTransactions()
         external
         view
@@ -47,7 +50,7 @@ interface IP2PModule {
             uint256[] memory timestamps
         );
 
-    /// @notice Returns a pending P2P transaction for an user
+    /// @notice Returns validated P2P transactions for a specific user
     function getUserValidatedP2PTransactions(address user)
         external
         view
@@ -63,5 +66,4 @@ interface IP2PModule {
 
     /// @notice Calculates the total cost of a pending P2P transaction
     function pendingP2PCost(uint256 id) external view returns (uint256);
-
 }
