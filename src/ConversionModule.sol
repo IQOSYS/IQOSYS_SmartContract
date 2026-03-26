@@ -23,6 +23,8 @@ contract ConversionModule is IConversionModule, ERC2771Context {
     event IQSToOSTConversionRejected(uint256 indexed requestId, address indexed user);
     event IQSToOSTConversionCancelled(uint256 indexed requestId, address indexed user);
 
+    
+
     /// @param _accessControl Address of AccessControl module
     /// @param _tokenManager Address of TokenManager module
     /// @param forwarder Address of the Trusted Forwarder (ERC2771)
@@ -33,6 +35,12 @@ contract ConversionModule is IConversionModule, ERC2771Context {
     ) ERC2771Context(forwarder) {
         accessControl = IAccessControl(_accessControl);
         tokenManager = ITokenManager(_tokenManager);
+    }
+
+    // CHANGEMENT : Utilise désormais isAdmin() au lieu de owner()
+    modifier onlyAdmin() {
+        require(accessControl.isAdmin(_msgSender()), "Caller is not an admin");
+        _;
     }
 
     /// @inheritdoc IConversionModule
@@ -53,10 +61,7 @@ contract ConversionModule is IConversionModule, ERC2771Context {
     }
 
     /// @inheritdoc IConversionModule
-    function approveIQSToOSTConversion(uint256 requestId) external override {
-        // CHANGEMENT : Vérification de l'owner via _msgSender()
-        // Cela permet aussi à l'admin d'utiliser le Forwarder s'il le souhaite
-        require(_msgSender() == accessControl.owner(), "Only owner");
+    function approveIQSToOSTConversion(uint256 requestId) external onlyAdmin override {
         
         PendingIQSToOSTConversion storage request = pendingIQSToOSTConversions[requestId];
         require(request.requester != address(0), "Conversion request not found");
@@ -79,10 +84,7 @@ contract ConversionModule is IConversionModule, ERC2771Context {
     }
 
     /// @inheritdoc IConversionModule
-    function rejectIQSToOSTConversion(uint256 requestId) external override {
-        // CHANGEMENT : _msgSender()
-        require(_msgSender() == accessControl.owner(), "Only owner");
-        
+    function rejectIQSToOSTConversion(uint256 requestId) external onlyAdmin override {   
         PendingIQSToOSTConversion storage request = pendingIQSToOSTConversions[requestId];
         require(request.requester != address(0), "Conversion request not found");   
         address user = request.requester;

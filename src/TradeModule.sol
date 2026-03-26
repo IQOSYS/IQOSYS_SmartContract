@@ -92,6 +92,12 @@ contract TradeModule is ITradeModule, ERC2771Context {
         _executeBuyFill(buyOrderId, intendedSeller);
     }
 
+    
+    function adminExecuteTradeMatch(uint256 sellOrderId, address intendedBuyer, uint256 buyOrderId, address intendedSeller) external onlyAdmin {
+        _executeSellFill(sellOrderId, intendedBuyer);
+        _executeBuyFill(buyOrderId, intendedSeller);
+    }
+
     // --- LOGIQUE INTERNE MUTUALISÉE ---
 
     function _executeSellFill(uint256 sellOrderId, address buyer) internal {
@@ -211,13 +217,6 @@ contract TradeModule is ITradeModule, ERC2771Context {
     function nextExecutedTradeIdf() external view override returns (uint256) { return nextExecutedTradeId; }
     function nextValidateExecutedTradeIdf() external view returns (uint256) { return nextValidateExecutedTradeId; }
 
-    function calculateTotalCost(uint256 executedTradeId) external view returns (uint256 total) {
-        ExecutedTrade storage et = executedTrades[executedTradeId];
-        require(et.seller != address(0), "No such executed trade");
-        uint256 base = et.amount * et.price;
-        uint256 pct  = (base * tokenManager.transactionFeeRatef()) / 100;
-        return base + pct + tokenManager.transactionFeef();
-    }
 
     function getUserValidatedTradesOrderBook(address user) external view returns (uint256[] memory ids, uint256[] memory sellOrderIds, uint256[] memory buyOrderIds, address[] memory sellers, address[] memory buyers, uint256[] memory amounts, uint256[] memory prices, bool[] memory isIQSFlags, uint256[] memory timestamps) {
         uint256 total = nextValidateExecutedTradeId; uint256 count = 0;

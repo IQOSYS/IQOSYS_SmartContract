@@ -27,9 +27,6 @@ interface IP2PModule {
     function validateP2PTransaction(uint256 id) external;
 
     // --- AJOUT POUR LE FLUX FIAT ---
-    /// @notice Validates a P2P transaction by an administrator (bypasses user confirmation)
-    function adminValidateP2PTransaction(uint256 id) external;
-
     /// @notice Rejects a P2P transaction (owner only)
     function rejectP2PTransaction(uint256 id) external;
 
@@ -63,7 +60,4 @@ interface IP2PModule {
             bool[]    memory isIQSFlags,
             uint256[] memory timestamps
         );
-
-    /// @notice Calculates the total cost of a pending P2P transaction
-    function pendingP2PCost(uint256 id) external view returns (uint256);
 }

@@ -3,7 +3,6 @@ pragma solidity ^0.8.19;
 
 import "./AccessControl.sol";
 import "./TokenManager.sol";
-import "./ProfileManager.sol";
 import "./P2PModule.sol";
 import "./OrderBookModule.sol";
 import "./TradeModule.sol";
@@ -16,7 +15,6 @@ import "./DAO.sol";
 contract IQOS {
     AccessControl   public accessControl;
     TokenManager    public tokenManager;
-    ProfileManager  public profileManager;
     P2PModule       public p2pModule;
     OrderBookModule public orderBookModule;
     TradeModule     public tradeModule;
@@ -27,7 +25,6 @@ contract IQOS {
     /// @notice Initialise le core avec les adresses des modules externes
     /// @param _accessControl Adresse du contrat AccessControl
     /// @param _tokenManager Adresse du contrat TokenManager
-    /// @param _profileManager Adresse du contrat ProfileManager
     /// @param _p2pModule Adresse du contrat P2PModule
     /// @param _orderBookModule Adresse du contrat OrderBookModule
     /// @param _tradeModule Adresse du contrat TradeModule
@@ -37,7 +34,6 @@ contract IQOS {
     constructor(
         address _accessControl,
         address _tokenManager,
-        address _profileManager,
         address _p2pModule,
         address _orderBookModule,
         address _tradeModule,
@@ -47,7 +43,6 @@ contract IQOS {
     ) {
         accessControl     = AccessControl(_accessControl);
         tokenManager      = TokenManager(_tokenManager);
-        profileManager    = ProfileManager(_profileManager);
         p2pModule         = P2PModule(_p2pModule);
         orderBookModule   = OrderBookModule(_orderBookModule);
         tradeModule       = TradeModule(_tradeModule);

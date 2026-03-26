@@ -42,6 +42,9 @@ interface ITradeModule {
     /// @notice Allows Admin to fill a buy order on behalf of a specific seller
     function adminOrderBuyFill(uint256 buyOrderId, address intendedSeller) external;
 
+    function adminExecuteTradeMatch(uint256 sellOrderId, address intendedBuyer, uint256 buyOrderId, address intendedSeller) external;
+
+
     // --- VALIDATION / REJET ---
     /// @notice Validates an executed trade (owner/admin only)
     function validateExecutedTrade(uint256 executedTradeId) external;
@@ -62,8 +65,6 @@ interface ITradeModule {
     /// @notice Returns the next validated trade ID
     function nextValidateExecutedTradeIdf() external view returns (uint256);
 
-    /// @notice Returns the cost of an executed trade
-    function calculateTotalCost(uint256 executedTradeId) external view returns (uint256 total);
 
     /// @notice Returns the history of a user's validated trades
     function getUserValidatedTradesOrderBook(address user) external view returns (

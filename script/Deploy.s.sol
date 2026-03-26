@@ -7,7 +7,6 @@ import "@openzeppelin/contracts/metatx/ERC2771Forwarder.sol";
 
 import "../src/AccessControl.sol";
 import "../src/TokenManager.sol";
-import "../src/ProfileManager.sol";
 import "../src/P2PModule.sol";
 import "../src/OrderBookModule.sol";
 import "../src/TradeModule.sol";
@@ -37,9 +36,6 @@ contract DeployIQOS is Script {
         // TokenManager(accessControl, forwarder)
         TokenManager tm  = new TokenManager(address(ac), address(forwarder));
         
-        // ProfileManager(initialOwner, forwarder)
-        ProfileManager pm  = new ProfileManager(deployerAddress, address(forwarder));
-        
         // P2PModule(accessControl, tokenManager, forwarder)
         P2PModule p2p = new P2PModule(address(ac), address(tm), address(forwarder));
         
@@ -51,9 +47,10 @@ contract DeployIQOS is Script {
         
         // ConversionModule(accessControl, tokenManager, forwarder)
         ConversionModule cm  = new ConversionModule(address(ac), address(tm), address(forwarder));
+        ac.addAdmin(address(cm)); // Permet au module de conversion d'être admin pour gérer les conversions
         
-        // HashRegistry(initialOwner, forwarder)
-        HashRegistry hr  = new HashRegistry(deployerAddress, address(forwarder));
+        // HashRegistry(initialOwner, forwarder, accessControl)
+        HashRegistry hr  = new HashRegistry(deployerAddress, address(forwarder), address(ac)); // HashRegistry a besoin d'être admin pour gérer les hashes valides
         
         // DAO(tokenManager, initialOwner, forwarder)
         DAO dao = new DAO(address(tm), deployerAddress, address(forwarder));
@@ -62,7 +59,6 @@ contract DeployIQOS is Script {
         IQOS core = new IQOS(
             address(ac),
             address(tm),
-            address(pm),
             address(p2p),
             address(ob),
             address(tr),
@@ -76,7 +72,6 @@ contract DeployIQOS is Script {
         console.log("IQOS core deployed at      :", address(core));
         console.log("AccessControl deployed at  :", address(ac));
         console.log("TokenManager deployed at   :", address(tm));
-        console.log("ProfileManager deployed at :", address(pm));
         console.log("P2PModule deployed at      :", address(p2p));
         console.log("OrderBookModule deployed at:", address(ob));
         console.log("TradeModule deployed at    :", address(tr));

@@ -15,7 +15,6 @@ interface ITokenManager {
     function transferIQStoIQS(address to, uint256 amount) external;
     function mintIQS(uint256 amount) external;
     function burnIQS(uint256 amount, address acc) external;
-    function createTokenBatch(uint256 amount) external;
 
     // --- OST Token ---
     function nameOST() external pure returns (string memory);
@@ -32,15 +31,6 @@ interface ITokenManager {
     function _addIQSHolder(address account) external;
     function getIQSHolders() external view returns (address[] memory, uint256[] memory);
     function getOSTHolders() external view returns (address[] memory, uint256[] memory);
-    
-
-    // --- Fees & Conversion ---
-    function transactionFeeRatef() external view returns (uint256);
-    function transactionFeef() external view returns (uint256);
-    function conversionRateGasToEuros() external view returns (uint256);
-    function setTransactionFeeRate(uint256 newRate) external;
-    function setTransactionFee(uint256 newFee) external;
-    function setConversionRate(uint256 newRate) external;
 
     // --- Tests ---
     function setBalanceForTesting(address account,uint256 iqosBalance,uint256 ostBalance) external;

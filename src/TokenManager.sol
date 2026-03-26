@@ -35,12 +35,6 @@ contract TokenManager is ITokenManager, ERC2771Context {
     EnumerableSet.AddressSet private tokenHoldersOST;
     event TransferOST(address indexed from, address indexed to, uint256 amount);
 
-    // --- Fees & Conversion ---
-    uint256 public transactionFeeRate = 2;
-    uint256 public transactionFee = 10;
-    uint256 public override conversionRateGasToEuros = 1;
-    event TransactionFeeRateUpdated(uint256 newRate);
-    event TransactionFeeUpdated(uint256 newFee);
 
     /// @param _accessControl Address du module de contrôle d'accès
     /// @param forwarder Address du Trusted Forwarder
@@ -52,8 +46,8 @@ contract TokenManager is ITokenManager, ERC2771Context {
         _balancesOST[owner] = initialSupplyOST;
         tokenHoldersOST.add(owner);
         totalSupplyOST = initialSupplyOST;
-    }
-
+    }                           
+                        
     // --- IQS Functions ---
     function balanceOfIQS(address account) external view override returns (uint256) {
         return _balancesIQS[account];
@@ -99,8 +93,7 @@ contract TokenManager is ITokenManager, ERC2771Context {
     }
 
     function burnIQS(uint256 amount, address acc) external {
-
-        require(_msgSender() == accessControl.owner(), "Only owner");
+        require(accessControl.isAdmin(_msgSender()), "Caller is not an admin");
         require(amount > 0, "Amount must be greater than zero");
         require(_balancesIQS[acc] >= amount, "Insufficient IQS balance");
 
@@ -108,17 +101,7 @@ contract TokenManager is ITokenManager, ERC2771Context {
         totalSupplyIQS -= amount;
     }
 
-    function createTokenBatch(uint256 amount) external override {
-        address sender = _msgSender();
-        require(sender == accessControl.owner(), "Only owner");
-        require(amount > 0, "Amount must be greater than zero");
-        require(totalSupplyIQS + totalSupplyOST + amount <= maxSupplyIQS + initialSupplyOST, "Exceeds total supply");
-        require(_balancesIQS[sender] + amount <= iqosysTreasuryShareLimit, "Exceeds treasury limit");
-        
-        _balancesIQS[sender] += amount;
-        totalSupplyIQS += amount;
-        emit TransferIQS(address(0), sender, amount);
-    }
+
 
     // --- OST Functions ---
     function balanceOfOST(address account) external view override returns (uint256) {
@@ -184,33 +167,7 @@ contract TokenManager is ITokenManager, ERC2771Context {
         return (addrs, bals);
     }
 
-    // --- Fees & Conversion ---
-    function setTransactionFeeRate(uint256 newRate) external override {
-        require(_msgSender() == accessControl.owner(), "Only owner");
-        require(newRate <= 10, "Fee rate cannot exceed 10%");
-        transactionFeeRate = newRate;
-        emit TransactionFeeRateUpdated(newRate);
-    }
-
-    function setTransactionFee(uint256 newFee) external override {
-        require(_msgSender() == accessControl.owner(), "Only owner");
-        require(newFee > 0, "Transaction fee must be greater than zero");
-        transactionFee = newFee;
-        emit TransactionFeeUpdated(newFee);
-    }
-
-    function transactionFeeRatef() external view returns (uint256) {
-        return transactionFeeRate;
-    }
-
-    function transactionFeef() external view returns (uint256) {
-        return transactionFee;
-    }
-
-    function setConversionRate(uint256 newRate) external {
-        require(_msgSender() == accessControl.owner(), "Only owner");
-        conversionRateGasToEuros = newRate;
-    }
+    
 
     function _addIQSHolder(address account) external {
         if (_balancesIQS[account] > 0 && !tokenHoldersIQS.contains(account)) {

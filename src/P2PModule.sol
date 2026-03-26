@@ -154,16 +154,6 @@ contract P2PModule is IP2PModule, ERC2771Context {
         _executeTransferAndCleanup(id, txp);
     }
 
-    /**
-     * @notice SOLUTION FLUX FIAT : Validation par l'administrateur
-     * @dev Permet à l'admin de libérer les tokens du séquestre sans attendre la signature on-chain de l'acheteur.
-     */
-    function adminValidateP2PTransaction(uint256 id) external onlyAdmin {
-        PendingP2PTransaction storage txp = pendingP2PTransactions[id];
-        require(txp.from != address(0), "No such P2P transaction");
-
-        _executeTransferAndCleanup(id, txp);
-    }
 
     /// @dev Helper interne pour le transfert et l'archivage
     function _executeTransferAndCleanup(uint256 id, PendingP2PTransaction storage txp) internal {
@@ -239,14 +229,6 @@ contract P2PModule is IP2PModule, ERC2771Context {
 
     function getTransactionHistoryLengthP2P() public view returns (uint256) {
         return nextValidatedP2PId > 0 ? nextValidatedP2PId - 1 : 0; 
-    }
-
-    function pendingP2PCost(uint256 id) external view override returns (uint256) {
-        PendingP2PTransaction storage txp = pendingP2PTransactions[id];
-        require(txp.from != address(0), "No such pending P2P");
-        uint256 baseCost = txp.amount * txp.price;
-        uint256 pct = (baseCost * tokenManager.transactionFeeRatef()) / 100;
-        return baseCost + pct + tokenManager.transactionFeef();
     }
 
     // --- ERC2771 OVERRIDES ---

@@ -54,6 +54,7 @@ contract AccessControl is Ownable, IAccessControl, ERC2771Context {
         return ERC2771Context._contextSuffixLength();
     }
 
+
     // --- LOGIQUE MÉTIER : GESTION DES ADMINS ---
 
     /**
@@ -79,41 +80,46 @@ contract AccessControl is Ownable, IAccessControl, ERC2771Context {
         return admins[account];
     }
 
+    // CHANGEMENT : Utilise désormais isAdmin() au lieu de owner()
+    modifier onlyAdmin() {
+        require(isAdmin(_msgSender()), "Caller is not an admin");
+        _;
+    }
     // --- LOGIQUE MÉTIER : STANDARDS ---
 
     function owner() public view override(Ownable, IAccessControl) returns (address) {
         return Ownable.owner();
     }
 
-    function authorizeAddress(address account) external onlyOwner override {
+    function authorizeAddress(address account) external onlyAdmin override {
         require(!authorizedAddresses[account], "Address already authorized");
         authorizedAddresses[account] = true;
         emit AuthorizationUpdated(account, true);
     }
 
-    function revokeAuthorization(address account) external onlyOwner override {
+    function revokeAuthorization(address account) external onlyAdmin override {
         require(authorizedAddresses[account], "Address not authorized");
         authorizedAddresses[account] = false;
         emit AuthorizationUpdated(account, false);
     }
 
-    function addToWhiteList(address account) external onlyOwner override {
+    function addToWhiteList(address account) external onlyAdmin override {
         require(iqosysWhiteList.add(account), "Account already white-listed");
         emit WhiteListed(account, true);
     }
 
-    function removeFromWhiteList(address account) external onlyOwner override {
+    function removeFromWhiteList(address account) external onlyAdmin override {
         require(iqosysWhiteList.remove(account), "Account not in white-list");
         emit WhiteListed(account, false);
     }
 
-    function freezeAddress(address account) external onlyOwner override {
+    function freezeAddress(address account) external onlyAdmin override {
         require(!frozenAddresses[account], "Address already frozen");
         frozenAddresses[account] = true;
         emit AddressFrozen(account, true);
     }
 
-    function unfreezeAddress(address account) external onlyOwner override {
+    function unfreezeAddress(address account) external onlyAdmin override {
         require(frozenAddresses[account], "Address not frozen");
         frozenAddresses[account] = false;
         emit AddressFrozen(account, false);
