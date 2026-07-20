@@ -2,15 +2,24 @@
 pragma solidity ^0.8.20;
 
 /// @title Interface for Access Control Module
-/// @notice Defines authorization, whitelist, and freeze functionalities
+/// @notice Defines admin, authorization, whitelist, and freeze functionalities
 interface IAccessControl {
     /// @notice Returns the owner of the contract
     function owner() external view returns (address);
-    
+
+    /// @notice Adds an administrator
+    function addAdmin(address account) external;
+
+    /// @notice Removes an administrator
+    function removeAdmin(address account) external;
+
+    /// @notice Checks whether an address is an admin
+    function isAdmin(address account) external view returns (bool);
+
     /// @notice Grants authorization to an address
     function authorizeAddress(address account) external;
 
-    /// @notice Revokes authorization of an address
+    /// @notice Revokes authorization from an address
     function revokeAuthorization(address account) external;
 
     /// @notice Adds an address to the whitelist
@@ -19,7 +28,7 @@ interface IAccessControl {
     /// @notice Removes an address from the whitelist
     function removeFromWhiteList(address account) external;
 
-    /// @notice Freezes an address (blocks its operations)
+    /// @notice Freezes an address and blocks its operations
     function freezeAddress(address account) external;
 
     /// @notice Unfreezes an address
@@ -34,13 +43,9 @@ interface IAccessControl {
     /// @notice Checks whether an address is frozen
     function isFrozen(address account) external view returns (bool);
 
-    /// @notice Checks if the sender is valid (whitelisted, authorized, not frozen)
+    /// @notice Checks if an account is valid: whitelisted, authorized, and not frozen
     function onlyValidSender(address account) external view returns (bool);
 
     /// @notice Returns the whitelist of addresses
     function getWhiteList() external view returns (address[] memory);
-
-    // --- AJOUT POUR RÉSOUDRE L'ERREUR ---
-    /// @notice Checks whether an address is an admin (Validator FIAT)
-    function isAdmin(address account) external view returns (bool);
 }

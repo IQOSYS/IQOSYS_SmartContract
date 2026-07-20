@@ -1,2 +1,7 @@
-
-# 🚀 Déploiement Officiel - v1.0.0-RC1 (Amoy) - **Déployé par :** Pierre Dubois - **Tag Git :** [v1.0.0-amoy-rc1](https://github.com/iqosys/IQOSYS_SmartContract/releases/tag/v1.0.0-amoy-rc1) - **Réseau :** Polygon Amoy (Chain ID: 80002) ## 📜 Adresses des Contrats | Module | Adresse | Vérifié ? | | :--- | :--- | :---: | | **Trusted Forwarder** | `0x01a492425ce5FB6A018a9E6FC87a780a189662CF` | ✅ | | **AccessControl** | `0xF860Df59deb12508b4513f554901497b3f5847a6` | ✅ | | **TokenManager** | `0x47A02DCa1d03cf769db8283EDa4b85012B8E8870` | ✅ | | **ProfileManager** | `0xB52C0D103854cc33926234287b3F277C37659CCa` | ✅ | | **P2PModule** | `0xb1b65252e2B3EeA014a56399aefd0d9E2b24D62B` | ✅ | | **OrderBookModule** | `0x6e49b8431D72546694bfeEe96F698376896B8668` | ✅ | | **TradeModule** | `0xD89Ee5095E7C0740fd3D898Fcb78A4aD006271F1` | ✅ | | **ConversionModule** | `0x97811C573c11eD708Cb981616eD44590D95Be7d4` | ✅ | | **HashRegistry** | `0xC641A139Ef5DfabB9Acb80438944E125C09B3e69` | ✅ | | **DAO** | `0x63929Da3fC20E6f969311DcF5C36BE5E6d2fA26E` | ✅ | | **IQOS Core** | `0x481e2D1ba064F874362ad85d398658106E76ebcb` | ✅ |
+  IQOS core deployed at          : 0xf6857e4Df67F1116F37e78D249FEf91C35C30168
+  AccessControl deployed at      : 0xAF1a17683FE2ae298b921F7FD391f6b4234D781c
+  TokenManager deployed at       : 0x223291b514f9867194391f13709c9e695397D0ad
+  OrderBookModule deployed at    : 0xD1622c1DDe93ae6FDc49047495fFc369D2b5DA61
+  ConversionModule deployed at   : 0xF801DbaEA813344d1715215c46B6f1E0DA7eA599
+  HashRegistry deployed at       : 0xeED814F455b8995dE51EFba5141A0a67eE27521a
+  GovernanceRegistry deployed at : 0xC58271fAfa8641043770105D16a8E2D5D8c4C9fA

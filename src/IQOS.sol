@@ -1,53 +1,38 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 import "./AccessControl.sol";
 import "./TokenManager.sol";
-import "./P2PModule.sol";
 import "./OrderBookModule.sol";
-import "./TradeModule.sol";
 import "./ConversionModule.sol";
 import "./HashRegistry.sol";
-import "./DAO.sol";
 
 /// @title IQOS Core
-/// @notice Contrat principal qui référence tous les modules déployés séparément
+/// @notice Main aggregator contract referencing the deployed IQOS modules
 contract IQOS {
-    AccessControl   public accessControl;
-    TokenManager    public tokenManager;
-    P2PModule       public p2pModule;
+    AccessControl public accessControl;
+    TokenManager public tokenManager;
     OrderBookModule public orderBookModule;
-    TradeModule     public tradeModule;
     ConversionModule public conversionModule;
-    HashRegistry    public hashRegistry;
-    DAO             public dao;
+    HashRegistry public hashRegistry;
 
-    /// @notice Initialise le core avec les adresses des modules externes
-    /// @param _accessControl Adresse du contrat AccessControl
-    /// @param _tokenManager Adresse du contrat TokenManager
-    /// @param _p2pModule Adresse du contrat P2PModule
-    /// @param _orderBookModule Adresse du contrat OrderBookModule
-    /// @param _tradeModule Adresse du contrat TradeModule
-    /// @param _conversionModule Adresse du contrat ConversionModule
-    /// @param _hashRegistry Adresse du contrat HashRegistry
-    /// @param _dao Adresse du contrat DAO
     constructor(
         address _accessControl,
         address _tokenManager,
-        address _p2pModule,
         address _orderBookModule,
-        address _tradeModule,
         address _conversionModule,
-        address _hashRegistry,
-        address _dao
+        address _hashRegistry
     ) {
-        accessControl     = AccessControl(_accessControl);
-        tokenManager      = TokenManager(_tokenManager);
-        p2pModule         = P2PModule(_p2pModule);
-        orderBookModule   = OrderBookModule(_orderBookModule);
-        tradeModule       = TradeModule(_tradeModule);
-        conversionModule  = ConversionModule(_conversionModule);
-        hashRegistry      = HashRegistry(_hashRegistry);
-        dao               = DAO(_dao);
+        require(_accessControl != address(0), "Invalid access control");
+        require(_tokenManager != address(0), "Invalid token manager");
+        require(_orderBookModule != address(0), "Invalid order book");
+        require(_conversionModule != address(0), "Invalid conversion module");
+        require(_hashRegistry != address(0), "Invalid hash registry");
+
+        accessControl = AccessControl(_accessControl);
+        tokenManager = TokenManager(_tokenManager);
+        orderBookModule = OrderBookModule(_orderBookModule);
+        conversionModule = ConversionModule(_conversionModule);
+        hashRegistry = HashRegistry(_hashRegistry);
     }
 }

@@ -2,10 +2,17 @@
 pragma solidity ^0.8.20;
 
 /// @title Interface for Order Book Module
-/// @notice Handles active sell & buy orders directly in the order book
+/// @notice Handles admin-mediated IQS/OST buy and sell orders with staged settlement.
 interface IOrderBookModule {
-    
-    // --- STRUCTURES ---
+    enum OrderStatus {
+        None,
+        Placed,
+        Accepted,
+        SettlementInProgress,
+        Completed,
+        Cancelled,
+        Rejected
+    }
 
     struct SellOrder {
         uint256 id;
@@ -14,6 +21,11 @@ interface IOrderBookModule {
         uint256 price;
         bool isIQS;
         uint256 timestamp;
+        uint256 completedAt;
+        OrderStatus status;
+        bytes32 referenceHash;
+        bytes32 fiatReferenceHash;
+        bytes32 receiptHash;
     }
 
     struct BuyOrder {
@@ -23,24 +35,109 @@ interface IOrderBookModule {
         uint256 price;
         bool isIQS;
         uint256 timestamp;
+        uint256 completedAt;
+        OrderStatus status;
+        bytes32 referenceHash;
+        bytes32 fiatReferenceHash;
+        bytes32 receiptHash;
     }
 
-    // --- SELL ORDERS ---
-    function proposeSellOrder(uint256 amount, uint256 price, bool isIQS) external;
-    function cancelSellOrder(uint256 id) external;
-    function adminCancelSellOrder(uint256 id) external;
-    function deleteSellOrder(uint256 id) external;
+    function adminCreateSellOrder(
+        address seller,
+        uint256 amount,
+        uint256 price,
+        bool isIQS,
+        bytes32 referenceHash
+    ) external returns (uint256);
 
-    // --- BUY ORDERS ---
-    function proposeBuyOrder(uint256 amount, uint256 price, bool isIQS) external;
-    function cancelBuyOrder(uint256 id) external;
-    function adminCancelBuyOrder(uint256 id) external;
-    function deleteBuyOrder(uint256 id) external;
+    function adminAcceptSellOrder(
+        uint256 id
+    ) external;
 
-    // --- GETTERS (Nécessaires pour le TradeModule et le Frontend) ---
-    function sellOrdersf(uint256 id) external view returns (SellOrder memory);
-    function nextSellOrderIdf() external view returns (uint256);
+    function adminStartSellSettlement(
+        uint256 id
+    ) external;
 
-    function buyOrdersf(uint256 id) external view returns (BuyOrder memory);
-    function nextBuyOrderIdf() external view returns (uint256);
+    function adminCompleteSellOrder(
+        uint256 id
+    ) external;
+
+    function adminCompleteSellOrder(
+        uint256 id,
+        bytes32 fiatReferenceHash
+    ) external;
+
+    function adminCancelSellOrder(
+        uint256 id
+    ) external;
+
+    function adminRejectSellOrder(
+        uint256 id
+    ) external;
+
+    function adminRecordSellReceiptHash(
+        uint256 id,
+        bytes32 receiptHash
+    ) external;
+
+    function adminCreateBuyOrder(
+        address buyer,
+        uint256 amount,
+        uint256 price,
+        bool isIQS,
+        bytes32 referenceHash
+    ) external returns (uint256);
+
+    function adminAcceptBuyOrder(
+        uint256 id
+    ) external;
+
+    function adminStartBuySettlement(
+        uint256 id
+    ) external;
+
+    function adminCompleteBuyOrder(
+        uint256 id
+    ) external;
+
+    function adminCompleteBuyOrder(
+        uint256 id,
+        bytes32 fiatReferenceHash
+    ) external;
+
+    function adminCancelBuyOrder(
+        uint256 id
+    ) external;
+
+    function adminRejectBuyOrder(
+        uint256 id
+    ) external;
+
+    function adminRecordBuyReceiptHash(
+        uint256 id,
+        bytes32 receiptHash
+    ) external;
+
+    function sellOrdersf(
+        uint256 id
+    ) external view returns (SellOrder memory);
+
+    function buyOrdersf(
+        uint256 id
+    ) external view returns (BuyOrder memory);
+
+    function nextSellOrderIdf()
+        external
+        view
+        returns (uint256);
+
+    function nextBuyOrderIdf()
+        external
+        view
+        returns (uint256);
+
+    function escrowAddress()
+        external
+        view
+        returns (address);
 }
