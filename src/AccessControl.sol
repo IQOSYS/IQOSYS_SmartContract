@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20; 
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-import "@openzeppelin/contracts/metatx/ERC2771Context.sol";
 import "./IAccessControl.sol";
 
 /// @title Access Control Module
 /// @notice Manages owner, authorized addresses, admins, whitelist and frozen accounts
-contract AccessControl is Ownable, IAccessControl, ERC2771Context {
+contract AccessControl is Ownable, IAccessControl {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     EnumerableSet.AddressSet private iqosysWhiteList;
+
     mapping(address => bool) private authorizedAddresses;
     mapping(address => bool) private frozenAddresses;
-    
-    // --- NOUVEAU : Mapping pour les administrateurs (Validateurs FIAT) ---
     mapping(address => bool) private admins;
 
     event AuthorizationUpdated(address indexed account, bool isAuthorized);
@@ -24,104 +22,120 @@ contract AccessControl is Ownable, IAccessControl, ERC2771Context {
     event AdminUpdated(address indexed account, bool isAdmin);
 
     /**
-     * @notice Initialise le module avec le propriétaire et le relais de gas
-     * @param initialOwner L'adresse de l'administrateur
-     * @param forwarder L'adresse du contrat Trusted Forwarder
+     * @notice Initializes the module with the initial owner/admin.
+     * @param initialOwner Address that will own and administer the module.
      */
-    constructor(address initialOwner, address forwarder) 
-        Ownable(msg.sender) 
-        ERC2771Context(forwarder) 
-    {
-        _transferOwnership(initialOwner);
-        // Le propriétaire est admin par défaut pour la configuration initiale
+    constructor(address initialOwner) Ownable(initialOwner) {
+        require(initialOwner != address(0), "Invalid owner");
+
         admins[initialOwner] = true;
         authorizedAddresses[initialOwner] = true;
         iqosysWhiteList.add(initialOwner);
+
         emit AdminUpdated(initialOwner, true);
+        emit AuthorizationUpdated(initialOwner, true);
+        emit WhiteListed(initialOwner, true);
     }
 
-    // --- RÉSOLUTION DES CONFLITS D'HÉRITAGE (CONTEXT) ---
-
-    function _msgSender() internal view override(Context, ERC2771Context) returns (address) {
-        return ERC2771Context._msgSender();
-    }
-
-    function _msgData() internal view override(Context, ERC2771Context) returns (bytes calldata) {
-        return ERC2771Context._msgData();
-    }
-
-    function _contextSuffixLength() internal view override(Context, ERC2771Context) returns (uint256) {
-        return ERC2771Context._contextSuffixLength();
-    }
-
-
-    // --- LOGIQUE MÉTIER : GESTION DES ADMINS ---
+    // -------------------------------------------------------------------------
+    // Admin management
+    // -------------------------------------------------------------------------
 
     /**
-     * @notice Ajoute un administrateur capable de valider les flux FIAT
+     * @notice Adds an administrator.
      */
     function addAdmin(address account) external onlyOwner {
+        require(account != address(0), "Invalid account");
+        require(!admins[account], "Already admin");
+
         admins[account] = true;
+
         emit AdminUpdated(account, true);
     }
 
     /**
-     * @notice Retire les droits d'administration
+     * @notice Removes administrator rights.
      */
     function removeAdmin(address account) external onlyOwner {
+        require(account != address(0), "Invalid account");
+        require(admins[account], "Not admin");
+
         admins[account] = false;
+
         emit AdminUpdated(account, false);
     }
 
     /**
-     * @notice Vérifie si une adresse est un administrateur/validateur
+     * @notice Checks whether an address is an administrator.
      */
-    function isAdmin(address account) public view  returns (bool) {
+    function isAdmin(address account) public view returns (bool) {
         return admins[account];
     }
 
-    // CHANGEMENT : Utilise désormais isAdmin() au lieu de owner()
     modifier onlyAdmin() {
-        require(isAdmin(_msgSender()), "Caller is not an admin");
+        require(isAdmin(msg.sender), "Caller is not an admin");
         _;
     }
-    // --- LOGIQUE MÉTIER : STANDARDS ---
+
+    // -------------------------------------------------------------------------
+    // IAccessControl compatibility
+    // -------------------------------------------------------------------------
 
     function owner() public view override(Ownable, IAccessControl) returns (address) {
         return Ownable.owner();
     }
 
+    // -------------------------------------------------------------------------
+    // Authorization / whitelist / freeze logic
+    // -------------------------------------------------------------------------
+
     function authorizeAddress(address account) external onlyAdmin override {
+        require(account != address(0), "Invalid account");
         require(!authorizedAddresses[account], "Address already authorized");
+
         authorizedAddresses[account] = true;
+
         emit AuthorizationUpdated(account, true);
     }
 
     function revokeAuthorization(address account) external onlyAdmin override {
+        require(account != address(0), "Invalid account");
         require(authorizedAddresses[account], "Address not authorized");
+
         authorizedAddresses[account] = false;
+
         emit AuthorizationUpdated(account, false);
     }
 
     function addToWhiteList(address account) external onlyAdmin override {
+        require(account != address(0), "Invalid account");
         require(iqosysWhiteList.add(account), "Account already white-listed");
+
         emit WhiteListed(account, true);
     }
 
     function removeFromWhiteList(address account) external onlyAdmin override {
+        require(account != address(0), "Invalid account");
         require(iqosysWhiteList.remove(account), "Account not in white-list");
+
         emit WhiteListed(account, false);
     }
 
     function freezeAddress(address account) external onlyAdmin override {
+        require(account != address(0), "Invalid account");
         require(!frozenAddresses[account], "Address already frozen");
+
         frozenAddresses[account] = true;
+
         emit AddressFrozen(account, true);
     }
 
     function unfreezeAddress(address account) external onlyAdmin override {
+        require(account != address(0), "Invalid account");
         require(frozenAddresses[account], "Address not frozen");
+
         frozenAddresses[account] = false;
+
         emit AddressFrozen(account, false);
     }
 
@@ -134,13 +148,14 @@ contract AccessControl is Ownable, IAccessControl, ERC2771Context {
     }
 
     function isFrozen(address account) external view override returns (bool) {
-          return frozenAddresses[account];
+        return frozenAddresses[account];
     }
 
     function onlyValidSender(address account) external view override returns (bool) {
         require(iqosysWhiteList.contains(account), "Sender not white-listed");
         require(authorizedAddresses[account], "Sender not authorized");
         require(!frozenAddresses[account], "Sender is frozen");
+
         return true;
     }
 

@@ -1,175 +1,1014 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+
 import "./IOrderBookModule.sol";
 import "./IAccessControl.sol";
 import "./ITokenManager.sol";
-import "@openzeppelin/contracts/metatx/ERC2771Context.sol";
 
-contract OrderBookModule is IOrderBookModule, ERC2771Context {
+/// @title Order Book Module
+/// @notice Admin-mediated IQS/OST order book with staged fiat-gated settlement.
+contract OrderBookModule is
+    IOrderBookModule,
+    ReentrancyGuard,
+    Pausable
+{
     IAccessControl public accessControl;
     ITokenManager public tokenManager;
+
+    address public immutable override escrowAddress;
 
     uint256 private nextSellOrderId;
     uint256 private nextBuyOrderId;
 
-    mapping(uint256 => SellOrder) public sellOrders;
-    mapping(uint256 => BuyOrder) public buyOrders;
+    mapping(uint256 => SellOrder) private sellOrders;
+    mapping(uint256 => BuyOrder) private buyOrders;
 
-    // Événements simplifiés
-    event SellOrderCreated(uint256 indexed id, address indexed seller, uint256 amount, uint256 price, bool isIQS, uint256 timestamp);
-    event SellOrderCanceled(uint256 indexed id, address indexed seller);
+    event SellOrderCreated(
+        uint256 indexed id,
+        address indexed seller,
+        uint256 amount,
+        uint256 price,
+        bool isIQS,
+        bytes32 indexed referenceHash,
+        uint256 timestamp
+    );
 
-    event BuyOrderCreated(uint256 indexed id, address indexed buyer, uint256 amount, uint256 price, bool isIQS, uint256 timestamp);
-    event BuyOrderCanceled(uint256 indexed id, address indexed buyer);
+    event BuyOrderCreated(
+        uint256 indexed id,
+        address indexed buyer,
+        uint256 amount,
+        uint256 price,
+        bool isIQS,
+        bytes32 indexed referenceHash,
+        uint256 timestamp
+    );
 
-    modifier onlyValidSender() {
-        address sender = _msgSender();
-        require(accessControl.isWhiteListed(sender), "Sender not whitelisted");
-        require(accessControl.isAuthorized(sender), "Sender not authorized");
-        require(!accessControl.isFrozen(sender), "Sender is frozen");
-        _;
+    event SellOrderStatusChanged(
+        uint256 indexed id,
+        OrderStatus status,
+        uint256 timestamp
+    );
+
+    event BuyOrderStatusChanged(
+        uint256 indexed id,
+        OrderStatus status,
+        uint256 timestamp
+    );
+
+    event SellOrderCompleted(
+        uint256 indexed id,
+        address indexed seller,
+        uint256 amount,
+        bool isIQS,
+        bytes32 indexed fiatReferenceHash,
+        uint256 timestamp
+    );
+
+    event BuyOrderCompleted(
+        uint256 indexed id,
+        address indexed buyer,
+        uint256 amount,
+        bool isIQS,
+        bytes32 indexed fiatReferenceHash,
+        uint256 timestamp
+    );
+
+    event SellOrderReceiptHashRecorded(
+        uint256 indexed id,
+        bytes32 indexed receiptHash,
+        uint256 timestamp
+    );
+
+    event BuyOrderReceiptHashRecorded(
+        uint256 indexed id,
+        bytes32 indexed receiptHash,
+        uint256 timestamp
+    );
+
+    event OrderBookPaused(
+        address indexed admin,
+        uint256 timestamp
+    );
+
+    event OrderBookUnpaused(
+        address indexed admin,
+        uint256 timestamp
+    );
+
+    constructor(
+        address _accessControl,
+        address _tokenManager
+    ) {
+        require(
+            _accessControl != address(0),
+            "Invalid access control"
+        );
+
+        require(
+            _tokenManager != address(0),
+            "Invalid token manager"
+        );
+
+        accessControl =
+            IAccessControl(_accessControl);
+
+        tokenManager =
+            ITokenManager(_tokenManager);
+
+        escrowAddress =
+            address(this);
     }
 
     modifier onlyAdmin() {
-        require(accessControl.isAdmin(_msgSender()), "Caller is not an admin");
+        require(
+            accessControl.isAdmin(msg.sender),
+            "Caller is not an admin"
+        );
         _;
     }
 
-    constructor(
-        address _accessControl, 
-        address _tokenManager, 
-        address forwarder
-    ) ERC2771Context(forwarder) {
-        accessControl = IAccessControl(_accessControl);
-        tokenManager = ITokenManager(_tokenManager);
+    modifier sellOrderExists(
+        uint256 id
+    ) {
+        require(
+            sellOrders[id].seller != address(0),
+            "Sell order not found"
+        );
+        _;
     }
 
-    // --- SELL ORDERS ---
+    modifier buyOrderExists(
+        uint256 id
+    ) {
+        require(
+            buyOrders[id].buyer != address(0),
+            "Buy order not found"
+        );
+        _;
+    }
 
-    function proposeSellOrder(uint256 amount, uint256 price, bool isIQS) external override onlyValidSender {
-        address sender = _msgSender();
+    // -------------------------------------------------------------------------
+    // Pause
+    // -------------------------------------------------------------------------
 
-        require(amount > 0, "Amount must be > 0");
-        require(price  > 0, "Price must be > 0");
+    function pause()
+        external
+        onlyAdmin
+    {
+        _pause();
 
-        // 🔒 SÉQUESTRE (Escrow) : Maintenu pour la sécurité
+        emit OrderBookPaused(
+            msg.sender,
+            block.timestamp
+        );
+    }
+
+    function unpause()
+        external
+        onlyAdmin
+    {
+        _unpause();
+
+        emit OrderBookUnpaused(
+            msg.sender,
+            block.timestamp
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Sell orders
+    // -------------------------------------------------------------------------
+
+    /// @notice Admin creates an on-chain sell order after user 2FA/backend authorization.
+    /// @dev Seller's instrument is moved into module escrow immediately.
+    /// @param price Unit price in EUR cents.
+    function adminCreateSellOrder(
+        address seller,
+        uint256 amount,
+        uint256 price,
+        bool isIQS,
+        bytes32 referenceHash
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        nonReentrant
+        returns (uint256)
+    {
+        require(
+            seller != address(0),
+            "Invalid seller"
+        );
+
+        require(
+            amount > 0,
+            "Amount must be > 0"
+        );
+
+        require(
+            price > 0,
+            "Price must be > 0"
+        );
+
+        require(
+            referenceHash != bytes32(0),
+            "Reference hash required"
+        );
+        require(
+            accessControl.isWhiteListed(seller),
+            "Seller not white-listed"
+        );
+
         if (isIQS) {
-            require(tokenManager.balanceOfIQS(sender) >= amount, "Insufficient IQS balance");
-            tokenManager.transferIQSfromAtoB(sender, accessControl.owner(), amount); 
+            require(
+                tokenManager.balanceOfIQS(seller) >= amount,
+                "Insufficient IQS balance"
+            );
+
+            tokenManager.transferIQSfromAtoB(
+                seller,
+                escrowAddress,
+                amount
+            );
         } else {
-            require(tokenManager.balanceOfOST(sender) >= amount, "Insufficient OST balance");
-            tokenManager.transferOSTfromAtoB(sender, accessControl.owner(), amount);
+            require(
+                tokenManager.balanceOfOST(seller) >= amount,
+                "Insufficient OST balance"
+            );
+
+            tokenManager.transferOSTfromAtoB(
+                seller,
+                escrowAddress,
+                amount
+            );
         }
 
-        uint256 id = nextSellOrderId++;
-        
-        // Entrée directe dans le carnet public
-        sellOrders[id] = SellOrder({
-            id:        id,
-            seller:    sender, 
-            amount:    amount,
-            price:     price,
-            isIQS:     isIQS,
-            timestamp: block.timestamp
-        });
+        uint256 id =
+            nextSellOrderId++;
 
-        emit SellOrderCreated(id, sender, amount, price, isIQS, block.timestamp);
+        sellOrders[id] =
+            SellOrder({
+                id: id,
+                seller: seller,
+                amount: amount,
+                price: price,
+                isIQS: isIQS,
+                timestamp: block.timestamp,
+                completedAt: 0,
+                status: OrderStatus.Placed,
+                referenceHash: referenceHash,
+                fiatReferenceHash: bytes32(0),
+                receiptHash: bytes32(0)
+            });
+
+        emit SellOrderCreated(
+            id,
+            seller,
+            amount,
+            price,
+            isIQS,
+            referenceHash,
+            block.timestamp
+        );
+
+        emit SellOrderStatusChanged(
+            id,
+            OrderStatus.Placed,
+            block.timestamp
+        );
+
+        return id;
     }
 
-    function cancelSellOrder(uint256 id) external override onlyValidSender {
-        address sender = _msgSender(); 
-        SellOrder storage o = sellOrders[id];
-        require(o.seller == sender, "Not your order");
+    function adminAcceptSellOrder(
+        uint256 id
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        sellOrderExists(id)
+    {
+        SellOrder storage order =
+            sellOrders[id];
 
-        // Remboursement du séquestre
-        if (o.isIQS) {
-            require(tokenManager.balanceOfIQS(accessControl.owner()) >= o.amount, "Escrow IQS insufficient");
-            tokenManager.transferIQSfromAtoB(accessControl.owner(), sender, o.amount);
+        require(
+            order.status == OrderStatus.Placed,
+            "Invalid status"
+        );
+
+        order.status =
+            OrderStatus.Accepted;
+
+        emit SellOrderStatusChanged(
+            id,
+            OrderStatus.Accepted,
+            block.timestamp
+        );
+    }
+
+    function adminStartSellSettlement(
+        uint256 id
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        sellOrderExists(id)
+    {
+        SellOrder storage order =
+            sellOrders[id];
+
+        require(
+            order.status == OrderStatus.Accepted,
+            "Invalid status"
+        );
+
+        order.status =
+            OrderStatus.SettlementInProgress;
+
+        emit SellOrderStatusChanged(
+            id,
+            OrderStatus.SettlementInProgress,
+            block.timestamp
+        );
+    }
+
+    function adminCompleteSellOrder(
+        uint256 id
+    )
+        external
+        override
+    {
+        _completeSellOrder(
+            id,
+            bytes32(0)
+        );
+    }
+
+    function adminCompleteSellOrder(
+        uint256 id,
+        bytes32 fiatReferenceHash
+    )
+        external
+        override
+    {
+        _completeSellOrder(
+            id,
+            fiatReferenceHash
+        );
+    }
+
+    function adminCancelSellOrder(
+        uint256 id
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        nonReentrant
+        sellOrderExists(id)
+    {
+        SellOrder storage order =
+            sellOrders[id];
+
+        require(
+            order.status == OrderStatus.Placed ||
+                order.status == OrderStatus.Accepted ||
+                order.status == OrderStatus.SettlementInProgress,
+            "Cannot cancel"
+        );
+
+        order.status =
+            OrderStatus.Cancelled;
+
+        _refundSellOrder(
+            order
+        );
+
+        emit SellOrderStatusChanged(
+            id,
+            OrderStatus.Cancelled,
+            block.timestamp
+        );
+    }
+
+    function adminRejectSellOrder(
+        uint256 id
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        nonReentrant
+        sellOrderExists(id)
+    {
+        SellOrder storage order =
+            sellOrders[id];
+
+        require(
+            order.status == OrderStatus.Placed ||
+                order.status == OrderStatus.Accepted ||
+                order.status == OrderStatus.SettlementInProgress,
+            "Cannot reject"
+        );
+
+        order.status =
+            OrderStatus.Rejected;
+
+        _refundSellOrder(
+            order
+        );
+
+        emit SellOrderStatusChanged(
+            id,
+            OrderStatus.Rejected,
+            block.timestamp
+        );
+    }
+
+    function adminRecordSellReceiptHash(
+        uint256 id,
+        bytes32 receiptHash
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        sellOrderExists(id)
+    {
+        SellOrder storage order =
+            sellOrders[id];
+
+        require(
+            order.status == OrderStatus.Completed,
+            "Order not completed"
+        );
+
+        require(
+            receiptHash != bytes32(0),
+            "Invalid receipt hash"
+        );
+
+        require(
+            order.receiptHash == bytes32(0),
+            "Receipt already recorded"
+        );
+
+        order.receiptHash =
+            receiptHash;
+
+        emit SellOrderReceiptHashRecorded(
+            id,
+            receiptHash,
+            block.timestamp
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Buy orders
+    // -------------------------------------------------------------------------
+
+    /// @notice Admin creates an on-chain buy order after user 2FA/backend authorization.
+    /// @dev Treasury instrument is moved into module escrow immediately.
+    /// @param price Unit price in EUR cents.
+    function adminCreateBuyOrder(
+        address buyer,
+        uint256 amount,
+        uint256 price,
+        bool isIQS,
+        bytes32 referenceHash
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        nonReentrant
+        returns (uint256)
+    {
+        require(
+            buyer != address(0),
+            "Invalid buyer"
+        );
+
+        require(
+            amount > 0,
+            "Amount must be > 0"
+        );
+
+        require(
+            price > 0,
+            "Price must be > 0"
+        );
+
+        require(
+            referenceHash != bytes32(0),
+            "Reference hash required"
+        );
+
+        require(
+            accessControl.isWhiteListed(buyer),
+            "Buyer not white-listed"
+        );
+
+        address treasury =
+            accessControl.owner();
+
+        if (isIQS) {
+            require(
+                tokenManager.balanceOfIQS(treasury) >= amount,
+                "Treasury IQS insufficient"
+            );
+
+            tokenManager.transferIQSfromAtoB(
+                treasury,
+                escrowAddress,
+                amount
+            );
         } else {
-            require(tokenManager.balanceOfOST(accessControl.owner()) >= o.amount, "Escrow OST insufficient");
-            tokenManager.transferOSTfromAtoB(accessControl.owner(), sender, o.amount);
+            require(
+                tokenManager.balanceOfOST(treasury) >= amount,
+                "Treasury OST insufficient"
+            );
+
+            tokenManager.transferOSTfromAtoB(
+                treasury,
+                escrowAddress,
+                amount
+            );
         }
 
-        emit SellOrderCanceled(id, sender);
-        delete sellOrders[id];
+        uint256 id =
+            nextBuyOrderId++;
+
+        buyOrders[id] =
+            BuyOrder({
+                id: id,
+                buyer: buyer,
+                amount: amount,
+                price: price,
+                isIQS: isIQS,
+                timestamp: block.timestamp,
+                completedAt: 0,
+                status: OrderStatus.Placed,
+                referenceHash: referenceHash,
+                fiatReferenceHash: bytes32(0),
+                receiptHash: bytes32(0)
+            });
+
+        emit BuyOrderCreated(
+            id,
+            buyer,
+            amount,
+            price,
+            isIQS,
+            referenceHash,
+            block.timestamp
+        );
+
+        emit BuyOrderStatusChanged(
+            id,
+            OrderStatus.Placed,
+            block.timestamp
+        );
+
+        return id;
     }
 
-    function adminCancelSellOrder(uint256 id) external override onlyAdmin {
-        SellOrder storage o = sellOrders[id];
-        require(o.seller != address(0), "No such order");
+    function adminAcceptBuyOrder(
+        uint256 id
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        buyOrderExists(id)
+    {
+        BuyOrder storage order =
+            buyOrders[id];
 
-        // Remboursement du séquestre au vendeur
-        if (o.isIQS) {
-            require(tokenManager.balanceOfIQS(accessControl.owner()) >= o.amount, "Escrow IQS insufficient");
-            tokenManager.transferIQSfromAtoB(accessControl.owner(), o.seller, o.amount);
+        require(
+            order.status == OrderStatus.Placed,
+            "Invalid status"
+        );
+
+        order.status =
+            OrderStatus.Accepted;
+
+        emit BuyOrderStatusChanged(
+            id,
+            OrderStatus.Accepted,
+            block.timestamp
+        );
+    }
+
+    function adminStartBuySettlement(
+        uint256 id
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        buyOrderExists(id)
+    {
+        BuyOrder storage order =
+            buyOrders[id];
+
+        require(
+            order.status == OrderStatus.Accepted,
+            "Invalid status"
+        );
+
+        order.status =
+            OrderStatus.SettlementInProgress;
+
+        emit BuyOrderStatusChanged(
+            id,
+            OrderStatus.SettlementInProgress,
+            block.timestamp
+        );
+    }
+
+    function adminCompleteBuyOrder(
+        uint256 id
+    )
+        external
+        override
+    {
+        _completeBuyOrder(
+            id,
+            bytes32(0)
+        );
+    }
+
+    function adminCompleteBuyOrder(
+        uint256 id,
+        bytes32 fiatReferenceHash
+    )
+        external
+        override
+    {
+        _completeBuyOrder(
+            id,
+            fiatReferenceHash
+        );
+    }
+
+    function adminCancelBuyOrder(
+        uint256 id
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        nonReentrant
+        buyOrderExists(id)
+    {
+        BuyOrder storage order =
+            buyOrders[id];
+
+        require(
+            order.status == OrderStatus.Placed ||
+                order.status == OrderStatus.Accepted ||
+                order.status == OrderStatus.SettlementInProgress,
+            "Cannot cancel"
+        );
+
+        order.status =
+            OrderStatus.Cancelled;
+
+        _refundBuyOrder(
+            order
+        );
+
+        emit BuyOrderStatusChanged(
+            id,
+            OrderStatus.Cancelled,
+            block.timestamp
+        );
+    }
+
+    function adminRejectBuyOrder(
+        uint256 id
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        nonReentrant
+        buyOrderExists(id)
+    {
+        BuyOrder storage order =
+            buyOrders[id];
+
+        require(
+            order.status == OrderStatus.Placed ||
+                order.status == OrderStatus.Accepted ||
+                order.status == OrderStatus.SettlementInProgress,
+            "Cannot reject"
+        );
+
+        order.status =
+            OrderStatus.Rejected;
+
+        _refundBuyOrder(
+            order
+        );
+
+        emit BuyOrderStatusChanged(
+            id,
+            OrderStatus.Rejected,
+            block.timestamp
+        );
+    }
+
+    function adminRecordBuyReceiptHash(
+        uint256 id,
+        bytes32 receiptHash
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        buyOrderExists(id)
+    {
+        BuyOrder storage order =
+            buyOrders[id];
+
+        require(
+            order.status == OrderStatus.Completed,
+            "Order not completed"
+        );
+
+        require(
+            receiptHash != bytes32(0),
+            "Invalid receipt hash"
+        );
+
+        require(
+            order.receiptHash == bytes32(0),
+            "Receipt already recorded"
+        );
+
+        order.receiptHash =
+            receiptHash;
+
+        emit BuyOrderReceiptHashRecorded(
+            id,
+            receiptHash,
+            block.timestamp
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal settlement helpers
+    // -------------------------------------------------------------------------
+
+    function _completeSellOrder(
+        uint256 id,
+        bytes32 fiatReferenceHash
+    )
+        internal
+        onlyAdmin
+        whenNotPaused
+        nonReentrant
+        sellOrderExists(id)
+    {
+        SellOrder storage order =
+            sellOrders[id];
+
+        require(
+            order.status == OrderStatus.SettlementInProgress,
+            "Invalid status"
+        );
+
+        address treasury =
+            accessControl.owner();
+
+        order.status =
+            OrderStatus.Completed;
+
+        order.completedAt =
+            block.timestamp;
+
+        order.fiatReferenceHash =
+            fiatReferenceHash;
+
+        if (order.isIQS) {
+            require(
+                tokenManager.balanceOfIQS(escrowAddress) >= order.amount,
+                "Escrow IQS insufficient"
+            );
+
+            tokenManager.transferIQSfromAtoB(
+                escrowAddress,
+                treasury,
+                order.amount
+            );
         } else {
-            require(tokenManager.balanceOfOST(accessControl.owner()) >= o.amount, "Escrow OST insufficient");
-            tokenManager.transferOSTfromAtoB(accessControl.owner(), o.seller, o.amount);
+            require(
+                tokenManager.balanceOfOST(escrowAddress) >= order.amount,
+                "Escrow OST insufficient"
+            );
+
+            tokenManager.transferOSTfromAtoB(
+                escrowAddress,
+                treasury,
+                order.amount
+            );
         }
 
-        emit SellOrderCanceled(id, o.seller);
-        delete sellOrders[id];
+        emit SellOrderStatusChanged(
+            id,
+            OrderStatus.Completed,
+            block.timestamp
+        );
+
+        emit SellOrderCompleted(
+            id,
+            order.seller,
+            order.amount,
+            order.isIQS,
+            fiatReferenceHash,
+            block.timestamp
+        );
     }
 
-    function deleteSellOrder(uint256 id) external override {
-        delete sellOrders[id];
+    function _completeBuyOrder(
+        uint256 id,
+        bytes32 fiatReferenceHash
+    )
+        internal
+        onlyAdmin
+        whenNotPaused
+        nonReentrant
+        buyOrderExists(id)
+    {
+        BuyOrder storage order =
+            buyOrders[id];
+
+        require(
+            order.status == OrderStatus.SettlementInProgress,
+            "Invalid status"
+        );
+
+        order.status =
+            OrderStatus.Completed;
+
+        order.completedAt =
+            block.timestamp;
+
+        order.fiatReferenceHash =
+            fiatReferenceHash;
+
+        if (order.isIQS) {
+            require(
+                tokenManager.balanceOfIQS(escrowAddress) >= order.amount,
+                "Escrow IQS insufficient"
+            );
+
+            tokenManager.transferIQSfromAtoB(
+                escrowAddress,
+                order.buyer,
+                order.amount
+            );
+        } else {
+            require(
+                tokenManager.balanceOfOST(escrowAddress) >= order.amount,
+                "Escrow OST insufficient"
+            );
+
+            tokenManager.transferOSTfromAtoB(
+                escrowAddress,
+                order.buyer,
+                order.amount
+            );
+        }
+
+        emit BuyOrderStatusChanged(
+            id,
+            OrderStatus.Completed,
+            block.timestamp
+        );
+
+        emit BuyOrderCompleted(
+            id,
+            order.buyer,
+            order.amount,
+            order.isIQS,
+            fiatReferenceHash,
+            block.timestamp
+        );
     }
 
-    // --- BUY ORDERS ---
+    function _refundSellOrder(
+        SellOrder storage order
+    )
+        internal
+    {
+        if (order.isIQS) {
+            require(
+                tokenManager.balanceOfIQS(escrowAddress) >= order.amount,
+                "Escrow IQS insufficient"
+            );
 
-    function proposeBuyOrder(uint256 amount, uint256 price, bool isIQS) external override onlyValidSender {
-        address sender = _msgSender();
+            tokenManager.transferIQSfromAtoB(
+                escrowAddress,
+                order.seller,
+                order.amount
+            );
+        } else {
+            require(
+                tokenManager.balanceOfOST(escrowAddress) >= order.amount,
+                "Escrow OST insufficient"
+            );
 
-        require(amount > 0, "Amount must be > 0");
-        require(price  > 0, "Price must be > 0");
-
-        uint256 id = nextBuyOrderId++;
-        
-        // Entrée directe dans le carnet public
-        buyOrders[id] = BuyOrder({
-            id:        id,
-            buyer:     sender,
-            amount:    amount,
-            price:     price,
-            isIQS:     isIQS,
-            timestamp: block.timestamp
-        });
-
-        emit BuyOrderCreated(id, sender, amount, price, isIQS, block.timestamp);
+            tokenManager.transferOSTfromAtoB(
+                escrowAddress,
+                order.seller,
+                order.amount
+            );
+        }
     }
 
-    function cancelBuyOrder(uint256 id) external override onlyValidSender {
-        address sender = _msgSender();
-        BuyOrder storage o = buyOrders[id];
-        require(o.buyer == sender, "Not your order");
-        
-        emit BuyOrderCanceled(id, sender);
-        delete buyOrders[id];
+    function _refundBuyOrder(
+        BuyOrder storage order
+    )
+        internal
+    {
+        address treasury =
+            accessControl.owner();
+
+        if (order.isIQS) {
+            require(
+                tokenManager.balanceOfIQS(escrowAddress) >= order.amount,
+                "Escrow IQS insufficient"
+            );
+
+            tokenManager.transferIQSfromAtoB(
+                escrowAddress,
+                treasury,
+                order.amount
+            );
+        } else {
+            require(
+                tokenManager.balanceOfOST(escrowAddress) >= order.amount,
+                "Escrow OST insufficient"
+            );
+
+            tokenManager.transferOSTfromAtoB(
+                escrowAddress,
+                treasury,
+                order.amount
+            );
+        }
     }
 
-    function adminCancelBuyOrder(uint256 id) external override onlyAdmin {
-        BuyOrder storage o = buyOrders[id];
-        require(o.buyer != address(0), "No such order");
-        
-        emit BuyOrderCanceled(id, o.buyer);
-        delete buyOrders[id];
+    // -------------------------------------------------------------------------
+    // Getters
+    // -------------------------------------------------------------------------
+
+    function sellOrdersf(
+        uint256 id
+    )
+        external
+        view
+        override
+        returns (SellOrder memory)
+    {
+        return sellOrders[id];
     }
 
-    function deleteBuyOrder(uint256 id) external override {
-        delete buyOrders[id];
+    function buyOrdersf(
+        uint256 id
+    )
+        external
+        view
+        override
+        returns (BuyOrder memory)
+    {
+        return buyOrders[id];
     }
 
-    // --- GETTERS ---
+    function nextSellOrderIdf()
+        external
+        view
+        override
+        returns (uint256)
+    {
+        return nextSellOrderId;
+    }
 
-    function sellOrdersf(uint256 id) external view override returns (SellOrder memory) { return sellOrders[id]; }
-    function nextSellOrderIdf() external view override returns (uint256) { return nextSellOrderId; }
-
-    function buyOrdersf(uint256 id) external view override returns (BuyOrder memory) { return buyOrders[id]; }
-    function nextBuyOrderIdf() external view override returns (uint256) { return nextBuyOrderId; }
-
-    // --- ERC2771 OVERRIDES ---
-    function _msgSender() internal view override(ERC2771Context) returns (address) { return ERC2771Context._msgSender(); }
-    function _msgData() internal view override(ERC2771Context) returns (bytes calldata) { return ERC2771Context._msgData(); }
-    function _contextSuffixLength() internal view override(ERC2771Context) returns (uint256) { return ERC2771Context._contextSuffixLength(); }
+    function nextBuyOrderIdf()
+        external
+        view
+        override
+        returns (uint256)
+    {
+        return nextBuyOrderId;
+    }
 }

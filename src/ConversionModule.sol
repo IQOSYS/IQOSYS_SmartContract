@@ -1,178 +1,383 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+
 import "./IConversionModule.sol";
 import "./IAccessControl.sol";
 import "./ITokenManager.sol";
-import "@openzeppelin/contracts/metatx/ERC2771Context.sol";
 
 /// @title Conversion Module
-/// @notice Manages conversion requests from IQS to OST, approvals, rejections, and history
-contract ConversionModule is IConversionModule, ERC2771Context {
+/// @notice Admin-mediated IQS to OST conversion with burn-and-release settlement.
+contract ConversionModule is
+    IConversionModule,
+    ReentrancyGuard,
+    Pausable
+{
     IAccessControl public accessControl;
     ITokenManager public tokenManager;
 
-    mapping(uint256 => PendingIQSToOSTConversion) public pendingIQSToOSTConversions; 
-    uint256 public iqstoostConversionRequestCount = 0;
+    uint256 private nextConversionRequestId;
 
-    mapping(uint256 => PendingIQSToOSTConversion) public historyIQSToOSTConversions; 
-    uint256 public historyIQSToOSTConversionCount = 0;
+    mapping(uint256 => IQSToOSTConversion) private conversions;
 
-    event IQSToOSTConversionRequested(uint256 indexed requestId, address indexed user, uint256 amount);
-    event IQSToOSTConversionApproved(uint256 indexed requestId, address indexed user, uint256 amount);
-    event IQSToOSTConversionRejected(uint256 indexed requestId, address indexed user);
-    event IQSToOSTConversionCancelled(uint256 indexed requestId, address indexed user);
+    event IQSToOSTConversionRequested(
+        uint256 indexed requestId,
+        address indexed user,
+        uint256 amount,
+        bytes32 indexed referenceHash,
+        uint256 timestamp
+    );
 
-    
+    event IQSToOSTConversionApproved(
+        uint256 indexed requestId,
+        address indexed user,
+        uint256 amount,
+        uint256 timestamp
+    );
 
-    /// @param _accessControl Address of AccessControl module
-    /// @param _tokenManager Address of TokenManager module
-    /// @param forwarder Address of the Trusted Forwarder (ERC2771)
+    event IQSToOSTConversionRejected(
+        uint256 indexed requestId,
+        address indexed user,
+        uint256 timestamp
+    );
+
+    event IQSToOSTConversionCancelled(
+        uint256 indexed requestId,
+        address indexed user,
+        uint256 timestamp
+    );
+
+    event IQSToOSTConversionReceiptHashRecorded(
+        uint256 indexed requestId,
+        bytes32 indexed receiptHash,
+        uint256 timestamp
+    );
+
+    event ConversionModulePaused(
+        address indexed admin,
+        uint256 timestamp
+    );
+
+    event ConversionModuleUnpaused(
+        address indexed admin,
+        uint256 timestamp
+    );
+
+    /// @param _accessControl Address of AccessControl module.
+    /// @param _tokenManager Address of TokenManager module.
     constructor(
-        address _accessControl, 
-        address _tokenManager, 
-        address forwarder
-    ) ERC2771Context(forwarder) {
-        accessControl = IAccessControl(_accessControl);
-        tokenManager = ITokenManager(_tokenManager);
+        address _accessControl,
+        address _tokenManager
+    ) {
+        require(
+            _accessControl != address(0),
+            "Invalid access control"
+        );
+
+        require(
+            _tokenManager != address(0),
+            "Invalid token manager"
+        );
+
+        accessControl =
+            IAccessControl(_accessControl);
+
+        tokenManager =
+            ITokenManager(_tokenManager);
     }
 
-    // CHANGEMENT : Utilise désormais isAdmin() au lieu de owner()
     modifier onlyAdmin() {
-        require(accessControl.isAdmin(_msgSender()), "Caller is not an admin");
+        require(
+            accessControl.isAdmin(msg.sender),
+            "Caller is not an admin"
+        );
         _;
     }
 
-    /// @inheritdoc IConversionModule
-    function requestIQSToOSTConversion(uint256 amount) external override {
-        // CHANGEMENT : on récupère le vrai sender via _msgSender()
-        address sender = _msgSender();
-
-        accessControl.onlyValidSender(sender); 
-        require(amount > 0, "Amount must be greater than zero");
-        require(tokenManager.balanceOfIQS(sender) >= amount, "Insufficient IQS balance");
-
-        uint256 requestId = iqstoostConversionRequestCount++;
-        pendingIQSToOSTConversions[requestId] = PendingIQSToOSTConversion({
-            requester: sender,
-            amount: amount
-        });
-        emit IQSToOSTConversionRequested(requestId, sender, amount);
+    modifier conversionExists(
+        uint256 requestId
+    ) {
+        require(
+            conversions[requestId].requester != address(0),
+            "Conversion request not found"
+        );
+        _;
     }
 
-    /// @inheritdoc IConversionModule
-    function approveIQSToOSTConversion(uint256 requestId) external onlyAdmin override {
-        
-        PendingIQSToOSTConversion storage request = pendingIQSToOSTConversions[requestId];
-        require(request.requester != address(0), "Conversion request not found");
-        require(tokenManager.balanceOfIQS(request.requester) >= request.amount, "Insufficient IQS balance at approval");
-        require(tokenManager.totalSupplyOSTf() + request.amount <= tokenManager.maxSupplyOSTf(), "Exceeds max OST supply");
+    // -------------------------------------------------------------------------
+    // Pause
+    // -------------------------------------------------------------------------
 
-        tokenManager.burnIQS(request.amount, request.requester); 
-        tokenManager.transferOSTfromAtoB(accessControl.owner(), request.requester, request.amount);
-        tokenManager._addIQSHolder(request.requester);
-        tokenManager._addOSTHolder(request.requester);
+    function pause()
+        external
+        onlyAdmin
+    {
+        _pause();
 
-        uint256 histId = historyIQSToOSTConversionCount++;
-        historyIQSToOSTConversions[histId] = PendingIQSToOSTConversion({
-            requester: request.requester,
-            amount:    request.amount
-        });
-
-        delete pendingIQSToOSTConversions[requestId];
-        emit IQSToOSTConversionApproved(requestId, request.requester, request.amount);  
+        emit ConversionModulePaused(
+            msg.sender,
+            block.timestamp
+        );
     }
 
-    /// @inheritdoc IConversionModule
-    function rejectIQSToOSTConversion(uint256 requestId) external onlyAdmin override {   
-        PendingIQSToOSTConversion storage request = pendingIQSToOSTConversions[requestId];
-        require(request.requester != address(0), "Conversion request not found");   
-        address user = request.requester;
-        delete pendingIQSToOSTConversions[requestId]; 
-        emit IQSToOSTConversionRejected(requestId, user);
+    function unpause()
+        external
+        onlyAdmin
+    {
+        _unpause();
+
+        emit ConversionModuleUnpaused(
+            msg.sender,
+            block.timestamp
+        );
     }
 
-    /// @inheritdoc IConversionModule
-    function cancelIQSToOSTConversion(uint256 requestId) external override {
-        // CHANGEMENT : _msgSender()
-        address sender = _msgSender();
+    // -------------------------------------------------------------------------
+    // Conversion flow
+    // -------------------------------------------------------------------------
 
-        PendingIQSToOSTConversion storage request = pendingIQSToOSTConversions[requestId];
-        require(request.requester != address(0), "Conversion request not found");
-        require(request.requester == sender, "Only requester can cancel");
-        
-        delete pendingIQSToOSTConversions[requestId]; 
-        emit IQSToOSTConversionCancelled(requestId, sender);
+    /// @notice Admin creates an on-chain conversion request after user 2FA/backend authorization.
+    function adminCreateIQSToOSTConversionRequest(
+        address requester,
+        uint256 amount,
+        bytes32 referenceHash
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        nonReentrant
+        returns (uint256)
+    {
+        require(
+            requester != address(0),
+            "Invalid requester"
+        );
+
+        require(
+            amount > 0,
+            "Amount must be greater than zero"
+        );
+
+        require(
+            referenceHash != bytes32(0),
+            "Reference hash required"
+        );
+
+        accessControl.onlyValidSender(
+            requester
+        );
+
+        require(
+            tokenManager.balanceOfIQS(requester) >= amount,
+            "Insufficient IQS balance"
+        );
+
+        uint256 requestId =
+            nextConversionRequestId++;
+
+        conversions[requestId] =
+            IQSToOSTConversion({
+                id: requestId,
+                requester: requester,
+                amount: amount,
+                timestamp: block.timestamp,
+                completedAt: 0,
+                status: ConversionStatus.Requested,
+                referenceHash: referenceHash,
+                receiptHash: bytes32(0)
+            });
+
+        emit IQSToOSTConversionRequested(
+            requestId,
+            requester,
+            amount,
+            referenceHash,
+            block.timestamp
+        );
+
+        return requestId;
     }
 
-    // --- VIEW FUNCTIONS (Pas de changement nécessaire sur la logique, sauf overrides) ---
+    /// @notice Approves a pending conversion request.
+    /// @dev Burns IQS from requester and releases OST from treasury to requester.
+    function approveIQSToOSTConversion(
+        uint256 requestId
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        nonReentrant
+        conversionExists(requestId)
+    {
+        IQSToOSTConversion storage request =
+            conversions[requestId];
 
-    /// @inheritdoc IConversionModule
-    function getIQSToOSTConversionHistory()
+        require(
+            request.status == ConversionStatus.Requested,
+            "Invalid status"
+        );
+
+        require(
+            tokenManager.balanceOfIQS(request.requester) >= request.amount,
+            "Insufficient IQS balance"
+        );
+
+        address treasury =
+            accessControl.owner();
+
+        require(
+            tokenManager.balanceOfOST(treasury) >= request.amount,
+            "Insufficient OST treasury balance"
+        );
+
+        request.status =
+            ConversionStatus.Approved;
+
+        request.completedAt =
+            block.timestamp;
+
+        tokenManager.burnIQS(
+            request.amount,
+            request.requester
+        );
+
+        tokenManager.transferOSTfromAtoB(
+            treasury,
+            request.requester,
+            request.amount
+        );
+
+        emit IQSToOSTConversionApproved(
+            requestId,
+            request.requester,
+            request.amount,
+            block.timestamp
+        );
+    }
+
+    function rejectIQSToOSTConversion(
+        uint256 requestId
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        conversionExists(requestId)
+    {
+        IQSToOSTConversion storage request =
+            conversions[requestId];
+
+        require(
+            request.status == ConversionStatus.Requested,
+            "Invalid status"
+        );
+
+        request.status =
+            ConversionStatus.Rejected;
+
+        request.completedAt =
+            block.timestamp;
+
+        emit IQSToOSTConversionRejected(
+            requestId,
+            request.requester,
+            block.timestamp
+        );
+    }
+
+    function adminCancelIQSToOSTConversion(
+        uint256 requestId
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        conversionExists(requestId)
+    {
+        IQSToOSTConversion storage request =
+            conversions[requestId];
+
+        require(
+            request.status == ConversionStatus.Requested,
+            "Invalid status"
+        );
+
+        request.status =
+            ConversionStatus.Cancelled;
+
+        request.completedAt =
+            block.timestamp;
+
+        emit IQSToOSTConversionCancelled(
+            requestId,
+            request.requester,
+            block.timestamp
+        );
+    }
+
+    function adminRecordIQSToOSTConversionReceiptHash(
+        uint256 requestId,
+        bytes32 receiptHash
+    )
+        external
+        override
+        onlyAdmin
+        whenNotPaused
+        conversionExists(requestId)
+    {
+        IQSToOSTConversion storage request =
+            conversions[requestId];
+
+        require(
+            request.status == ConversionStatus.Approved,
+            "Conversion not approved"
+        );
+
+        require(
+            receiptHash != bytes32(0),
+            "Invalid receipt hash"
+        );
+
+        require(
+            request.receiptHash == bytes32(0),
+            "Receipt already recorded"
+        );
+
+        request.receiptHash =
+            receiptHash;
+
+        emit IQSToOSTConversionReceiptHashRecorded(
+            requestId,
+            receiptHash,
+            block.timestamp
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Getters
+    // -------------------------------------------------------------------------
+
+    function getIQSToOSTConversion(
+        uint256 requestId
+    )
         external
         view
-        returns (
-            address[] memory requesters,
-            uint256[] memory amounts
-        )
+        override
+        returns (IQSToOSTConversion memory)
     {
-        uint256 total = historyIQSToOSTConversionCount;
-        requesters = new address[](total);
-        amounts    = new uint256[](total);
-
-        for (uint256 i = 0; i < total; i++) {
-            PendingIQSToOSTConversion storage entry = historyIQSToOSTConversions[i];
-            requesters[i] = entry.requester;
-            amounts[i]    = entry.amount;
-        }
+        return conversions[requestId];
     }
 
-    /// @inheritdoc IConversionModule
-    function getUserIQSToOSTConversionHistory(address user)
+    function getTransactionHistoryLengthIQStoOST()
         external
         view
-        returns (
-            uint256[] memory requestIds,
-            uint256[] memory amounts
-        )
+        override
+        returns (uint256)
     {
-        uint256 total = historyIQSToOSTConversionCount;
-        uint256 count = 0;
-        for (uint256 i = 0; i < total; i++) {
-            if (historyIQSToOSTConversions[i].requester == user) {
-                count++;
-            }
-        }
-
-        requestIds = new uint256[](count);
-        amounts    = new uint256[](count);
-
-        uint256 idx = 0;
-        for (uint256 i = 0; i < total; i++) {
-            PendingIQSToOSTConversion storage entry = historyIQSToOSTConversions[i];
-            if (entry.requester == user) {
-                requestIds[idx] = i;
-                amounts[idx]    = entry.amount;
-                idx++;
-            }
-        }
-    }
-
-    function getTransactionHistoryLengthIQStoOST() public view returns (uint256) {
-        return historyIQSToOSTConversionCount; 
-    }
-
-    // --- RÉSOLUTION DES CONFLITS D'HÉRITAGE (ERC2771Context) ---
-
-    function _msgSender() internal view override(ERC2771Context) returns (address) {
-        return ERC2771Context._msgSender();
-    }
-
-    function _msgData() internal view override(ERC2771Context) returns (bytes calldata) {
-        return ERC2771Context._msgData();
-    }
-
-    function _contextSuffixLength() internal view override(ERC2771Context) returns (uint256) {
-        return ERC2771Context._contextSuffixLength();
+        return nextConversionRequestId;
     }
 }
