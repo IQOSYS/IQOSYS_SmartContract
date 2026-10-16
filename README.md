@@ -1,3 +1,16 @@
+Post-deployment action required:
+
+The AccessControl ownership transfer is initiated to OWNER_SAFE during deployment.
+
+The designated Safe must execute:
+acceptOwnership()
+
+Verification after acceptance:
+- AccessControl.owner() == OWNER_SAFE
+- AccessControl.pendingOwner() == address(0)
+- deployer is not an AccessControl admin
+  
+  
   IQOS core deployed at          : 0xf6857e4Df67F1116F37e78D249FEf91C35C30168
   AccessControl deployed at      : 0xAF1a17683FE2ae298b921F7FD391f6b4234D781c
   TokenManager deployed at       : 0x223291b514f9867194391f13709c9e695397D0ad
