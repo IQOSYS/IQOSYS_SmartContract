@@ -442,7 +442,6 @@ function setUp() public {
         assertTrue(accessControl.isAdmin(owner));
 
         assertEq(tokenManager.totalSupplyIQS(), 0);
-        assertEq(tokenManager.totalIQSInEscrow(), 0);
         assertEq(tokenManager.totalSupplyOSTf(), 0);
         assertEq(tokenManager.maxSupplyIQS(), type(uint256).max);
         assertEq(tokenManager.maxSupplyOSTf(), type(uint256).max);
@@ -471,21 +470,20 @@ function setUp() public {
                 referenceHash
             );
 
-        // C-1 requires unanimous 3-of-3 signer approval for wallet recovery.
-        _approveActionForConsumerByAllSigners(
+        // N-05: default 2-of-3 quorum, then the full on-chain delay.
+        _approveActionForConsumerByTwoSigners(
             actionHash,
             address(holderMigrationController)
         );
 
+        vm.warp(vm.getBlockTimestamp() + holderMigrationController.MIGRATION_DELAY());
         return actionHash;
     }
     function testIQSAwardedDirectlyToHolderAndCountedInEscrow() public {
         _awardIQS(alice, 100);
 
         assertEq(tokenManager.balanceOfIQS(alice), 100);
-        assertEq(tokenManager.iqsInEscrowOf(alice), 100);
         assertEq(tokenManager.totalSupplyIQS(), 100);
-        assertEq(tokenManager.totalIQSInEscrow(), 100);
     }
 
     function testLegacyTreasuryMintIQSReverts() public {
@@ -561,9 +559,7 @@ function setUp() public {
         );
 
         assertEq(tokenManager.balanceOfIQS(alice), 30);
-        assertEq(tokenManager.iqsInEscrowOf(alice), 30);
         assertEq(tokenManager.totalSupplyIQS(), 30);
-        assertEq(tokenManager.totalIQSInEscrow(), 30);
         assertEq(tokenManager.balanceOfOST(alice), 20);
         assertEq(tokenManager.totalSupplyOSTf(), 20);
 
@@ -1391,7 +1387,7 @@ function setUp() public {
         );
     }
 
-    function testHolderMigrationRequiresUnanimousApproval()
+    function testHolderMigrationUsesQuorumAndOnChainDelay()
     public
     {
         _awardIQS(alice, 50);
@@ -1420,11 +1416,9 @@ function setUp() public {
         assertEq(migration.referenceHash, MIGRATION_REF);
 
         assertEq(tokenManager.balanceOfIQS(alice), 0);
-        assertEq(tokenManager.iqsInEscrowOf(alice), 0);
         assertEq(tokenManager.balanceOfOST(alice), 0);
 
         assertEq(tokenManager.balanceOfIQS(aliceNewWallet), 50);
-        assertEq(tokenManager.iqsInEscrowOf(aliceNewWallet), 50);
         assertEq(tokenManager.balanceOfOST(aliceNewWallet), 30);
 
         (, bool consumed,) =
@@ -1468,37 +1462,24 @@ function setUp() public {
             MIGRATION_REF
         );
     }
-    function testHolderMigrationRequiresThreeOfThreeSigners() public {
+    function testHolderMigrationRequiresTwoSignersAnd48Hours() public {
         _awardIQS(alice, 50);
-        bytes32 actionHash = holderMigrationController.getHolderMigrationActionHash(
-            alice, aliceNewWallet, MIGRATION_REF
-        );
-
-        _approveActionForConsumerByTwoSigners(
-            actionHash, address(holderMigrationController)
-        );
-
-        // The ordinary 2-of-3 multisig threshold MUST NOT authorize recovery.
+        bytes32 hash = holderMigrationController.getHolderMigrationActionHash(alice, aliceNewWallet, MIGRATION_REF);
+        _approveActionForConsumerByTwoSigners(hash, address(holderMigrationController));
         vm.prank(owner);
-        vm.expectRevert("Action not approved");
+        vm.expectRevert("Migration delay not elapsed");
         holderMigrationController.migrateHolder(alice, aliceNewWallet, MIGRATION_REF);
-        assertEq(tokenManager.balanceOfIQS(alice), 50);
-        assertEq(tokenManager.balanceOfIQS(aliceNewWallet), 0);
-        (, bool consumedBefore,) = adminMultisig.getApprovalState(actionHash);
-        assertFalse(consumedBefore);
-
-        // Same proposal/hash: the third independent signer completes quorum.
-        vm.prank(signer3);
-        adminMultisig.approveActionForConsumer(
-            actionHash, address(holderMigrationController)
-        );
+        uint256 ready = holderMigrationController.migrationReadyAt(alice, aliceNewWallet, MIGRATION_REF);
+        vm.warp(ready - 1);
+        vm.prank(owner);
+        vm.expectRevert("Migration delay not elapsed");
+        holderMigrationController.migrateHolder(alice, aliceNewWallet, MIGRATION_REF);
+        vm.warp(ready);
         vm.prank(owner);
         holderMigrationController.migrateHolder(alice, aliceNewWallet, MIGRATION_REF);
-
-        assertEq(tokenManager.balanceOfIQS(alice), 0);
         assertEq(tokenManager.balanceOfIQS(aliceNewWallet), 50);
-        (, bool consumedAfter,) = adminMultisig.getApprovalState(actionHash);
-        assertTrue(consumedAfter);
+        (, bool consumed,) = adminMultisig.getApprovalState(hash);
+        assertTrue(consumed);
     }
 
     function testDirectTokenManagerHolderMigrationIsBlocked()
@@ -1860,9 +1841,7 @@ function testHolderMigrationAlsoMigratesBSAAndNewWalletCanExercise() public {
     assertEq(afterMigration.holder, aliceNewWallet);
 
     assertEq(tokenManager.balanceOfIQS(alice), 0);
-    assertEq(tokenManager.iqsInEscrowOf(alice), 0);
     assertEq(tokenManager.balanceOfIQS(aliceNewWallet), 100);
-    assertEq(tokenManager.iqsInEscrowOf(aliceNewWallet), 100);
 
     uint256[] memory oldWalletBSAIdsAfter = bsaRegistry.getBSAIdsOf(alice);
     uint256[] memory newWalletBSAIdsAfter = bsaRegistry.getBSAIdsOf(aliceNewWallet);
@@ -2056,6 +2035,7 @@ function testHolderMigrationWorksWithRequiredMultisigThreshold() public {
             actionHash,
             address(holderMigrationController)
         );
+    vm.warp(vm.getBlockTimestamp() + holderMigrationController.MIGRATION_DELAY());
 
     vm.prank(owner);
     holderMigrationController.migrateHolder(
@@ -2594,8 +2574,8 @@ function testCancelBSABurnsUnexercisedIQS() public {
 
     assertEq(tokenManager.balanceOfIQS(alice), 80);
     assertEq(tokenManager.totalSupplyIQS(), 80);
-    assertEq(tokenManager.totalIQSInEscrow(), 80);
 
+    _approveActionForConsumerByTwoSigners(bsaRegistry.getCancelBSAActionHash(bsaId, keccak256("cancel-bsa")), address(bsaRegistry));
     vm.prank(owner);
     bsaRegistry.cancelBSA(bsaId, keccak256("cancel-bsa"));
 
@@ -2606,9 +2586,7 @@ function testCancelBSABurnsUnexercisedIQS() public {
     assertEq(bsa.convertedIQS, 0);
     assertEq(bsaRegistry.availableIQSToExercise(bsaId), 0);
     assertEq(tokenManager.balanceOfIQS(alice), 0);
-    assertEq(tokenManager.iqsInEscrowOf(alice), 0);
     assertEq(tokenManager.totalSupplyIQS(), 0);
-    assertEq(tokenManager.totalIQSInEscrow(), 0);
 }
 function testCancelBSABurnsOnlyRemainingIQSAfterExercise() public {
     uint256 bsaId = _recordBSA(alice, 185, 100);
@@ -2638,6 +2616,7 @@ function testCancelBSABurnsOnlyRemainingIQSAfterExercise() public {
     assertEq(tokenManager.balanceOfIQS(alice), 60);
     assertEq(tokenManager.balanceOfOST(alice), 20);
 
+    _approveActionForConsumerByTwoSigners(bsaRegistry.getCancelBSAActionHash(bsaId, keccak256("partial-cancel")), address(bsaRegistry));
     vm.prank(owner);
     bsaRegistry.cancelBSA(bsaId, keccak256("partial-cancel"));
 
@@ -2650,12 +2629,12 @@ function testCancelBSABurnsOnlyRemainingIQSAfterExercise() public {
     assertEq(tokenManager.balanceOfIQS(alice), 0);
     assertEq(tokenManager.balanceOfOST(alice), 20);
     assertEq(tokenManager.totalSupplyIQS(), 0);
-    assertEq(tokenManager.totalIQSInEscrow(), 0);
     assertEq(tokenManager.totalSupplyOSTf(), 20);
 }
 function testCancelBSAWithoutAwards() public {
     uint256 bsaId = _recordBSA(alice, 185, 100);
 
+    _approveActionForConsumerByTwoSigners(bsaRegistry.getCancelBSAActionHash(bsaId, keccak256("cancel-empty-bsa")), address(bsaRegistry));
     vm.prank(owner);
     bsaRegistry.cancelBSA(bsaId, keccak256("cancel-empty-bsa"));
 
@@ -2675,6 +2654,7 @@ function testBSACancellationRevertsIfIQSBurnFails() public {
     vm.prank(address(tokenOperatorController));
     tokenManager.setTokenOperator(address(bsaRegistry), false);
 
+    _approveActionForConsumerByTwoSigners(bsaRegistry.getCancelBSAActionHash(bsaId, keccak256("failed-cancel")), address(bsaRegistry));
     vm.prank(owner);
     vm.expectRevert("Caller is not a token operator");
     bsaRegistry.cancelBSA(bsaId, keccak256("failed-cancel"));
@@ -2684,7 +2664,6 @@ function testBSACancellationRevertsIfIQSBurnFails() public {
     assertEq(uint256(bsa.status), uint256(IBSARegistry.BSAStatus.Active));
     assertEq(tokenManager.balanceOfIQS(alice), 40);
     assertEq(tokenManager.totalSupplyIQS(), 40);
-    assertEq(tokenManager.totalIQSInEscrow(), 40);
 }
 function testExpiredBSACannotCreateNewExerciseRequest() public {
     uint256 bsaId = _recordBSA(alice, 185, 100);
@@ -2708,7 +2687,6 @@ function testExpiredBSACannotCreateNewExerciseRequest() public {
     assertEq(bsaRegistry.expiredIQSBurnedOf(bsaId), 40);
     assertEq(tokenManager.balanceOfIQS(alice), 0);
     assertEq(tokenManager.totalSupplyIQS(), 0);
-    assertEq(tokenManager.totalIQSInEscrow(), 0);
 
     vm.prank(alice);
     vm.expectRevert("BSA expired");
@@ -2806,7 +2784,6 @@ function testExerciseRequestedBeforeExpiryCanSettleAfterExpiry() public {
 
     assertEq(tokenManager.balanceOfIQS(alice), 0);
     assertEq(tokenManager.totalSupplyIQS(), 0);
-    assertEq(tokenManager.totalIQSInEscrow(), 0);
     assertEq(tokenManager.balanceOfOST(alice), 20);
     assertEq(bsaRegistry.bsasf(bsaId).convertedIQS, 20);
     assertEq(bsaRegistry.expiredIQSBurnedOf(bsaId), 60);
@@ -2871,6 +2848,7 @@ function testBSACannotBeCancelledWhileExerciseIsPending() public {
 
     assertEq(conversionModule.pendingExerciseIQSForBSA(bsaId), 0);
 
+    _approveActionForConsumerByTwoSigners(bsaRegistry.getCancelBSAActionHash(bsaId, keccak256("cancel-after-request-closed")), address(bsaRegistry));
     vm.prank(owner);
     bsaRegistry.cancelBSA(bsaId, keccak256("cancel-after-request-closed"));
 
@@ -2911,7 +2889,6 @@ function testExpiredPendingExerciseCancellationBurnsReleasedIQS() public {
     assertEq(bsaRegistry.expiredIQSBurnedOf(bsaId), 80);
     assertEq(tokenManager.balanceOfIQS(alice), 0);
     assertEq(tokenManager.totalSupplyIQS(), 0);
-    assertEq(tokenManager.totalIQSInEscrow(), 0);
 }
 
 function testHolderMigrationBlockedWhileExercisePending() public {
@@ -3758,6 +3735,7 @@ function _approveActionForConsumerByAllSigners(
     function _reviewAttemptMigration(address oldWallet, address newWallet) internal {
         bytes32 hash = holderMigrationController.getHolderMigrationActionHash(oldWallet, newWallet, MIGRATION_REF);
         _approveActionForConsumerByAllSigners(hash, address(holderMigrationController));
+        vm.warp(vm.getBlockTimestamp() + holderMigrationController.MIGRATION_DELAY());
         vm.prank(owner);
         vm.expectRevert("Wallet has open OST transfers");
         holderMigrationController.migrateHolder(oldWallet, newWallet, MIGRATION_REF);
@@ -3773,6 +3751,7 @@ function _approveActionForConsumerByAllSigners(
         ostTransferModule.reclaimExpiredEscrow(id);
         bytes32 hash = holderMigrationController.getHolderMigrationActionHash(alice, aliceNewWallet, MIGRATION_REF);
         _approveActionForConsumerByAllSigners(hash, address(holderMigrationController));
+        vm.warp(vm.getBlockTimestamp() + holderMigrationController.MIGRATION_DELAY());
         vm.prank(owner);
         holderMigrationController.migrateHolder(alice, aliceNewWallet, MIGRATION_REF);
         assertEq(tokenManager.balanceOfOST(aliceNewWallet), 100);
@@ -3967,6 +3946,7 @@ function _approveActionForConsumerByAllSigners(
         assertEq(conversionModule.getExerciseRequest(id).capitalPaymentHash, CAPITAL_PAYMENT_HASH);
         assertEq(tokenManager.balanceOfIQS(alice), 100);
         assertEq(tokenManager.balanceOfOST(alice), 0);
+        _approveActionForConsumerByTwoSigners(bsaRegistry.getCancelBSAActionHash(bsaId, reason), address(bsaRegistry));
         vm.prank(owner);
         bsaRegistry.cancelBSA(bsaId, reason);
         assertEq(tokenManager.balanceOfIQS(alice), 0);

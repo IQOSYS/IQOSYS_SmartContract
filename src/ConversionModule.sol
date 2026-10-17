@@ -497,6 +497,7 @@ function finalizeExercise(
             request.status == ExerciseStatus.Settled,
             "Exercise not settled"
         );
+        require(request.receiptHash == bytes32(0), "Receipt hash already recorded");
         request.receiptHash =
             receiptHash;
         emit ExerciseReceiptHashRecorded(

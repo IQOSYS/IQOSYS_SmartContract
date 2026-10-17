@@ -40,7 +40,7 @@ interface IOSTTransferModule {
         address seller;
         address buyer;
         uint256 amount;
-        uint256 pricePerOST;
+        uint256 pricePerOST; // Integer EUR cents per OST.
         uint256 createdAt;
         uint256 updatedAt;
         uint256 completedAt;
@@ -82,6 +82,7 @@ interface IOSTTransferModule {
     function adminRejectTransfer(uint256 id, bytes32 reasonHash) external;
     function adminRegisterBuyerPaymentProof(uint256 id, bytes32 paymentProofHash) external;
     function adminValidateSellerPaymentReceipt(uint256 id, bytes32 sellerReceiptHash) external;
+    function getAdminMarkTransferDisputedActionHash(uint256 id, bytes32 disputeHash) external view returns (bytes32);
     function adminMarkTransferDisputed(uint256 id, bytes32 disputeHash) external;
 
     function counterTransfer(uint256 id, uint256 newAmount, uint256 newPricePerOST, bytes32 counterOfferHash) external;
