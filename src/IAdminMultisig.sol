@@ -2,6 +2,22 @@
 pragma solidity ^0.8.20;
 
 interface IAdminMultisig {
+    struct ProposalReplacement {
+        bytes32 actionHash;
+        bytes32 expectedFingerprint;
+        address consumer;
+        bytes4 selector;
+        bytes32 calldataHash;
+        string description;
+        uint256 deadline;
+    }
+    function proposalVersion(bytes32 actionHash) external view returns (uint256);
+    function getActionProposalFingerprint(bytes32 actionHash) external view returns (bytes32);
+    function getProposalReplacementHash(ProposalReplacement calldata replacement) external view returns (bytes32);
+    function getProposalReplacementApprovalCount(bytes32 replacementHash) external view returns (uint256);
+    function approveProposalReplacement(ProposalReplacement calldata replacement) external;
+    function getActionQuorumReachedAt(bytes32 actionHash, uint256 threshold) external view returns (uint256);
+
     function requiredSignatures() external view returns (uint256);
     function signerEpoch() external view returns (uint256);
     function ACTION_APPROVAL_VALIDITY() external view returns (uint256);

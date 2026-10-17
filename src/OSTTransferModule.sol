@@ -557,6 +557,13 @@ function adminValidateSellerPaymentReceipt(
     );
 }
 
+function getAdminMarkTransferDisputedActionHash(uint256 id, bytes32 disputeHash)
+    public view override transferExists(id) returns (bytes32)
+{
+    OSTTransfer storage transfer = transfers[id];
+    return keccak256(abi.encode(address(this), block.chainid, "ADMIN_MARK_OST_TRANSFER_DISPUTED",
+        id, transfer.seller, transfer.buyer, transfer.amount, transfer.referenceHash, disputeHash));
+}
 function adminMarkTransferDisputed(
     uint256 id,
     bytes32 disputeHash
@@ -581,6 +588,8 @@ function adminMarkTransferDisputed(
         disputeHash != bytes32(0),
         "Dispute hash required"
     );
+
+    adminMultisig.consumeApprovedAction(getAdminMarkTransferDisputedActionHash(id, disputeHash));
 
     transfer.resolutionHash =
         disputeHash;
@@ -1307,6 +1316,7 @@ function _lockEscrowAfterAgreement(
             "Receipt hash required"
         );
 
+        require(transfer.receiptHash == bytes32(0), "Receipt hash already recorded");
         transfer.receiptHash =
             receiptHash;
 

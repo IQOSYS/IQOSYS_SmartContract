@@ -48,11 +48,8 @@ contract TokenManager is
 
     uint256 public override totalSupplyIQS;
 
-    /// @notice Client requirement: count all awarded IQS placed in escrow.
-    uint256 public override totalIQSInEscrow;
 
     mapping(address => uint256) private _balancesIQS;
-    mapping(address => uint256) private _iqsInEscrow;
     EnumerableSet.AddressSet private tokenHoldersIQS;
 
     event TransferIQS(
@@ -431,19 +428,7 @@ contract TokenManager is
         return _balancesIQS[account];
     }
 
-    function iqsInEscrowOf(
-        address account
-    )
-        external
-        view
-        override
-        returns (uint256)
-    {
-        return _iqsInEscrow[account];
-    }
 
-    /// @notice IQS cannot be transferred, sold or gifted between users.
-    /// @dev Kept only so old code fails explicitly instead of silently moving IQS.
     function transferIQSfromAtoB(
         address,
         address,
@@ -503,14 +488,10 @@ contract TokenManager is
         _balancesIQS[account] +=
             amount;
 
-        _iqsInEscrow[account] +=
-            amount;
 
         totalSupplyIQS +=
             amount;
 
-        totalIQSInEscrow +=
-            amount;
 
         _syncIQSHolder(account);
 
@@ -554,22 +535,14 @@ contract TokenManager is
             "Insufficient IQS balance"
         );
 
-        require(
-            _iqsInEscrow[account] >= amount,
-            "Insufficient IQS escrow"
-        );
 
         _balancesIQS[account] -=
             amount;
 
-        _iqsInEscrow[account] -=
-            amount;
 
         totalSupplyIQS -=
             amount;
 
-        totalIQSInEscrow -=
-            amount;
 
         _syncIQSHolder(account);
 
@@ -960,14 +933,6 @@ contract TokenManager is
             _balancesIQS[newWallet] =
                 iqsAmount;
 
-            uint256 escrowAmount =
-                _iqsInEscrow[oldWallet];
-
-            _iqsInEscrow[oldWallet] =
-                0;
-
-            _iqsInEscrow[newWallet] =
-                escrowAmount;
 
             _syncIQSHolder(oldWallet);
             _syncIQSHolder(newWallet);

@@ -2,6 +2,13 @@
 pragma solidity ^0.8.20;
 
 interface IHolderMigrationController {
+    function MIGRATION_DELAY() external view returns (uint256);
+    function abortedMigrations(bytes32 actionHash) external view returns (bool);
+    function executedMigrations(bytes32 actionHash) external view returns (bool);
+    function migrationReadyAt(address oldWallet, address newWallet, bytes32 referenceHash) external view returns (uint256);
+    function getAbortHolderMigrationActionHash(address oldWallet, address newWallet, bytes32 referenceHash, bytes32 reasonHash) external view returns (bytes32);
+    function abortHolderMigration(address oldWallet, address newWallet, bytes32 referenceHash, bytes32 reasonHash) external;
+
     struct HolderMigration {
         uint256 id;
         address oldWallet;

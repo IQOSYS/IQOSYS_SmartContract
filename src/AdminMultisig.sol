@@ -47,6 +47,7 @@ contract AdminMultisig is IAdminMultisig {
         address intendedConsumer;
 
         mapping(address => uint256) approvedAtEpoch;
+        mapping(address => uint256) approvedAtTime;
 
     }
 
@@ -83,6 +84,13 @@ contract AdminMultisig is IAdminMultisig {
     }
 
     mapping(bytes32 => ActionProposal) private proposals;
+    mapping(bytes32 => uint256) public override proposalVersion;
+    struct QuorumBinding { bool exists; address consumer; bytes4 selector; bytes32 calldataHash; }
+    mapping(bytes32 => QuorumBinding) private quorumBindings;
+    mapping(bytes32 => mapping(address => bool)) private replacementVotes;
+    event ProposalReplacementApproved(bytes32 indexed replacementHash, bytes32 indexed actionHash, address indexed signer);
+    event ActionProposalCancelled(bytes32 indexed actionHash, bytes32 indexed previousFingerprint, bytes32 indexed replacementHash);
+
 
     event ActionProposed(
 
@@ -323,18 +331,15 @@ contract AdminMultisig is IAdminMultisig {
 
             "Invalid proposal deadline");
 
+        QuorumBinding storage binding = quorumBindings[actionHash];
+        require(!binding.exists || (binding.consumer == consumer && binding.selector == selector
+            && binding.calldataHash == calldataHash), "Action intent fixed by quorum");
         ActionProposal storage previous = proposals[actionHash];
         require(!previous.exists || block.timestamp > previous.deadline, "Action already proposed");
 
         require(!approvals[actionHash].consumed, "Action already consumed");
-        if (previous.exists) {
-            // delete(struct) does not clear its nested mapping. Clear every current
-            // signer explicitly; any later rotation increments signerEpoch.
-            for (uint256 i = 0; i < signers.length; i++) {
-                delete approvals[actionHash].approvedAtEpoch[signers[i]];
-            }
-            delete approvals[actionHash];
-        }
+        if (previous.exists) _clearActionApprovals(actionHash);
+        proposalVersion[actionHash]++;
 
         proposals[actionHash] = ActionProposal({
 
@@ -364,6 +369,89 @@ contract AdminMultisig is IAdminMultisig {
 
         );
 
+    }
+
+    /// @notice Fingerprint includes a monotonic version; same-block renewals are distinct.
+    function getActionProposalFingerprint(bytes32 actionHash) public view override returns (bytes32) {
+        return keccak256(abi.encode(address(this), block.chainid, actionHash,
+            proposalVersion[actionHash], proposals[actionHash]));
+    }
+
+    function getProposalReplacementHash(ProposalReplacement calldata replacement)
+        public view override returns (bytes32)
+    {
+        return keccak256(abi.encode(address(this), block.chainid, "REPLACE_ACTION_PROPOSAL",
+            signerEpoch, replacement));
+    }
+
+    function getProposalReplacementApprovalCount(bytes32 replacementHash) public view override returns (uint256 count) {
+        for (uint256 i; i < signers.length; i++) {
+            if (replacementVotes[replacementHash][signers[i]]) count++;
+        }
+    }
+
+    /// @notice Two signers (or a higher configured quorum) cancel and replace a
+    /// squatted proposal atomically. Votes are separate from the squatted action.
+    /// The repaired consumer/selector/calldata remain fixed across later renewals,
+    /// so the rogue signer cannot squat the hash again at the next deadline.
+    function approveProposalReplacement(ProposalReplacement calldata replacement)
+        external override onlySigner
+    {
+        bytes32 hash = replacement.actionHash;
+        require(proposals[hash].exists, "Action not proposed");
+        require(!approvals[hash].consumed, "Action already consumed");
+        require(replacement.expectedFingerprint == getActionProposalFingerprint(hash), "Proposal changed");
+        require(replacement.consumer == address(this) || actionConsumers[replacement.consumer], "Consumer not registered");
+        require(replacement.selector != bytes4(0), "Selector required");
+        require(replacement.calldataHash != bytes32(0), "Calldata hash required");
+        require(bytes(replacement.description).length > 0 && bytes(replacement.description).length <= 160,
+            "Invalid description length");
+        require(replacement.deadline > block.timestamp && replacement.deadline <= block.timestamp + ACTION_APPROVAL_VALIDITY,
+            "Invalid proposal deadline");
+        bytes32 voteHash = getProposalReplacementHash(replacement);
+        require(!replacementVotes[voteHash][msg.sender], "Signer already voted");
+        replacementVotes[voteHash][msg.sender] = true;
+        emit ProposalReplacementApproved(voteHash, hash, msg.sender);
+        uint256 threshold = requiredSignatures < 2 ? 2 : requiredSignatures;
+        if (getProposalReplacementApprovalCount(voteHash) < threshold) return;
+        _clearActionApprovals(hash);
+        quorumBindings[hash] = QuorumBinding(true, replacement.consumer, replacement.selector, replacement.calldataHash);
+        proposalVersion[hash]++;
+        proposals[hash] = ActionProposal(true, msg.sender, replacement.consumer, replacement.selector,
+            replacement.calldataHash, replacement.description, block.timestamp, replacement.deadline);
+        emit ActionProposalCancelled(hash, replacement.expectedFingerprint, voteHash);
+        emit ActionProposed(hash, replacement.consumer, msg.sender, replacement.selector,
+            replacement.calldataHash, replacement.description, replacement.deadline);
+    }
+
+    function _clearActionApprovals(bytes32 hash) private {
+        // Deleting a struct does not clear its nested mappings.
+        for (uint256 i; i < signers.length; i++) {
+            delete approvals[hash].approvedAtEpoch[signers[i]];
+            delete approvals[hash].approvedAtTime[signers[i]];
+        }
+        delete approvals[hash];
+    }
+
+    /// @notice Time of the threshold-th signature among CURRENT valid approvals.
+    /// Revocation/reapproval, rotation, expiry and proposal replacement cannot
+    /// reuse an old signature's time to skip a consumer's execution delay.
+    function getActionQuorumReachedAt(bytes32 hash, uint256 threshold) external view override returns (uint256) {
+        require(threshold >= requiredSignatures && threshold <= signers.length, "Invalid required approval count");
+        if (!isActionApprovedWithRequiredSignatures(hash, threshold)) return 0;
+        uint256[] memory times = new uint256[](signers.length);
+        uint256 count;
+        ActionApproval storage approval = approvals[hash];
+        for (uint256 i; i < signers.length; i++) {
+            address signer = signers[i];
+            if (approval.approvedAtEpoch[signer] != signerEpoch) continue;
+            uint256 timestamp = approval.approvedAtTime[signer];
+            uint256 j = count;
+            while (j > 0 && times[j - 1] > timestamp) { times[j] = times[j - 1]; j--; }
+            times[j] = timestamp;
+            count++;
+        }
+        return count >= threshold ? times[threshold - 1] : 0;
     }
 
     function getActionProposal(bytes32 actionHash)
@@ -499,6 +587,7 @@ contract AdminMultisig is IAdminMultisig {
         );
 
         approval.approvedAtEpoch[msg.sender] = signerEpoch;
+        approval.approvedAtTime[msg.sender] = block.timestamp;
 
         approval.approvalCount++;
 
@@ -543,6 +632,7 @@ contract AdminMultisig is IAdminMultisig {
         );
 
         approval.approvedAtEpoch[msg.sender] = 0;
+        approval.approvedAtTime[msg.sender] = 0;
 
         approval.approvalCount--;
 

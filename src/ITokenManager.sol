@@ -16,9 +16,7 @@ interface ITokenManager {
     function maxSupplyIQS() external pure returns (uint256);
 
     function totalSupplyIQS() external view returns (uint256);
-    function totalIQSInEscrow() external view returns (uint256);
     function balanceOfIQS(address account) external view returns (uint256);
-    function iqsInEscrowOf(address account) external view returns (uint256);
 
     /// @notice Legacy function kept only for ABI compatibility. Must revert in AMF model.
     function transferIQSfromAtoB(

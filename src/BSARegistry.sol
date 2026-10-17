@@ -19,6 +19,13 @@ contract BSARegistry is
     ITokenManager public tokenManager;
     IAdminMultisig public adminMultisig;
     uint256 private nextBSAId;
+    // Unsynchronized expiry allocations are indexed by their uint64 Unix timestamp.
+    // A Fenwick prefix sum excludes expired rights in <=64 reads, even without a
+    // keeper transaction. Recording, crediting, cancellation and status sync update
+    // both stored aggregates atomically. No holder/history scan is required.
+    uint256 private accountedEscrowIQS;
+    mapping(uint256 => uint256) private escrowByExpiry;
+    event BSAEscrowChanged(uint256 indexed bsaId, uint256 remainingIQS, uint256 timestamp);
     mapping(uint256 => BSARecord) private bsas;
     mapping(address => uint256) public override activeBSAOf;
     mapping(address => uint256[]) private holderBSAIds;
@@ -248,6 +255,7 @@ function setConversionModule(address _conversionModule)
             expiryDate > block.timestamp,
             "Invalid expiry date"
         );
+        require(expiryDate <= type(uint64).max, "Expiry timestamp too large");
         accessControl.onlyValidSender(holder);
         uint256 currentActiveId = activeBSAOf[holder];
         if (currentActiveId != 0) {
@@ -275,6 +283,8 @@ function setConversionModule(address _conversionModule)
             createdAt: block.timestamp,
             status: BSAStatus.Active
         });
+        _updateEscrow(expiryDate, maxIQS, true);
+        emit BSAEscrowChanged(bsaId, maxIQS, block.timestamp);
         activeBSAOf[holder] = bsaId;
         holderBSAIds[holder].push(bsaId);
         emit BSARecorded(
@@ -335,7 +345,9 @@ function setConversionModule(address _conversionModule)
             "BSA max IQS exceeded"
         );
         adminMultisig.consumeApprovedAction(getCreditIQSActionHash(bsaId, amount, awardReferenceHash));
+        _updateEscrow(bsa.expiryDate, amount, false);
         bsa.awardedIQS += amount;
+        emit BSAEscrowChanged(bsaId, bsa.maxIQS - bsa.awardedIQS, block.timestamp);
         tokenManager.mintIQSTo(
             bsa.holder,
             amount,
@@ -405,6 +417,13 @@ function setConversionModule(address _conversionModule)
             block.timestamp
         );
     }
+    function getCancelBSAActionHash(uint256 bsaId, bytes32 reasonHash)
+        public view override bsaExists(bsaId) returns (bytes32)
+    {
+        BSARecord storage bsa = bsas[bsaId];
+        return keccak256(abi.encode(address(this), block.chainid, "CANCEL_BSA",
+            bsaId, bsa.holder, bsa.bsaReferenceHash, bsa.termsHash, reasonHash));
+    }
     /// @notice Cancels an active BSA and burns its remaining unexercised IQS atomically.
     /// @dev The historical award/conversion counters are preserved for auditability.
 function cancelBSA(uint256 bsaId, bytes32 reasonHash)
@@ -426,6 +445,10 @@ function cancelBSA(uint256 bsaId, bytes32 reasonHash)
     require(block.timestamp < bsa.expiryDate, "BSA expired");
     require(_pendingExerciseIQS(bsaId) == 0, "BSA has pending exercise");
 
+    adminMultisig.consumeApprovedAction(getCancelBSAActionHash(bsaId, reasonHash));
+    uint256 remaining = bsa.maxIQS - bsa.awardedIQS;
+    if (remaining != 0) _updateEscrow(bsa.expiryDate, remaining, false);
+    emit BSAEscrowChanged(bsaId, 0, block.timestamp);
     uint256 unexercisedIQS = bsa.awardedIQS - bsa.convertedIQS;
 
     bsa.status = BSAStatus.Cancelled;
@@ -464,6 +487,9 @@ function _syncBSAStatus(uint256 bsaId) internal {
         block.timestamp >= bsa.expiryDate &&
         (bsa.status == BSAStatus.Active || bsa.status == BSAStatus.Exhausted)
     ) {
+        uint256 remaining = bsa.maxIQS - bsa.awardedIQS;
+        if (remaining != 0) _updateEscrow(bsa.expiryDate, remaining, false);
+        emit BSAEscrowChanged(bsaId, 0, block.timestamp);
         bsa.status = BSAStatus.Expired;
 
         if (activeBSAOf[bsa.holder] == bsaId) {
@@ -627,6 +653,34 @@ function migrateHolderBSA(address oldWallet, address newWallet)
     delete holderBSAIds[oldWallet];
     return migratedCount;
 }
+    /// @notice Unreleased IQS entitlements in unexpired active BSAs.
+    /// @dev Exact at the current timestamp, including expiries not yet synchronized.
+    function totalIQSInEscrow() external view override returns (uint256) {
+        uint256 timestamp = block.timestamp;
+        if (timestamp >= type(uint64).max) return 0;
+        uint256 expired;
+        for (uint256 index = timestamp; index != 0; index &= index - 1) {
+            expired += escrowByExpiry[index];
+        }
+        return accountedEscrowIQS - expired;
+    }
+
+    function iqsInEscrowOf(address holder) external view override returns (uint256) {
+        uint256 id = activeBSAOf[holder];
+        if (id == 0) return 0;
+        BSARecord storage bsa = bsas[id];
+        if (bsa.status != BSAStatus.Active || block.timestamp >= bsa.expiryDate) return 0;
+        return bsa.maxIQS - bsa.awardedIQS;
+    }
+
+    function _updateEscrow(uint256 expiry, uint256 amount, bool increase) private {
+        if (increase) accountedEscrowIQS += amount;
+        else accountedEscrowIQS -= amount;
+        for (uint256 index = expiry; index <= type(uint64).max; index += index & (~index + 1)) {
+            if (increase) escrowByExpiry[index] += amount;
+            else escrowByExpiry[index] -= amount;
+        }
+    }
     function getBSAIdsOf(address holder) external view override returns (uint256[] memory) {
         return holderBSAIds[holder];
     }
