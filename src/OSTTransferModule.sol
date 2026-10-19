@@ -318,6 +318,16 @@ contract OSTTransferModule is
             transfer.paymentProofHash, transfer.sellerReceiptHash, receiptHash));
     }
 
+    function getAdminConfirmSellerPaymentAndReleaseActionHash(
+        uint256 id, bytes32 sellerReceiptHash, bytes32 receiptHash
+    ) public view override transferExists(id) returns (bytes32) {
+        OSTTransfer storage transfer = transfers[id];
+        return keccak256(abi.encode(address(this), block.chainid, "ADMIN_CONFIRM_SELLER_PAYMENT_AND_RELEASE",
+            id, transfer.seller, transfer.buyer, transfer.amount, transfer.pricePerOST,
+            transfer.referenceHash, transfer.agreementHash, transfer.paymentProofHash,
+            sellerReceiptHash, receiptHash));
+    }
+
     function _setTransferStatus(OSTTransfer storage transfer, TransferStatus status) internal {
         if (status == TransferStatus.Released || status == TransferStatus.Returned ||
             status == TransferStatus.Cancelled || status == TransferStatus.Rejected) {
@@ -1139,6 +1149,22 @@ function _lockEscrowAfterAgreement(
     // -------------------------------------------------------------------------
     // Registrar/admin finalization
     // -------------------------------------------------------------------------
+
+    /// @notice One quorum approves both seller payment confirmation and the immediate OST release.
+    /// @dev Both receipt hashes are immutable approval inputs. Any failed release rolls back the confirmation and consumption.
+    function adminConfirmSellerPaymentAndRelease(
+        uint256 id, bytes32 sellerReceiptHash, bytes32 receiptHash
+    ) external override onlyAdmin transferExists(id) whenNotPaused nonReentrant {
+        OSTTransfer storage transfer = transfers[id];
+        require(transfer.status == TransferStatus.PaymentProofRegistered, "Payment proof not registered");
+        require(sellerReceiptHash != bytes32(0), "Seller receipt hash required");
+        require(receiptHash != bytes32(0), "Receipt hash required");
+        adminMultisig.consumeApprovedAction(getAdminConfirmSellerPaymentAndReleaseActionHash(id, sellerReceiptHash, receiptHash));
+        transfer.sellerReceiptHash = sellerReceiptHash;
+        _setTransferStatus(transfer, TransferStatus.SellerValidatedPayment);
+        emit SellerPaymentReceiptValidated(id, transfer.seller, sellerReceiptHash, block.timestamp);
+        _releaseEscrowToBuyer(id, transfer, receiptHash);
+    }
 
     function adminConfirmOSTTransaction(
         uint256 id,
