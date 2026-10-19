@@ -166,8 +166,6 @@ Recorded testnet module addresses:
 | HolderMigrationController | [`0x96bcFC9B740563B78CF02674833D2620a14240bA`](https://amoy.polygonscan.com/address/0x96bcFC9B740563B78CF02674833D2620a14240bA) |
 | TokenOperatorController | [`0xCea51DEbE0e878e8692CbB2b5E117CCe9646a866`](https://amoy.polygonscan.com/address/0xCea51DEbE0e878e8692CbB2b5E117CCe9646a866) |
 
-**Status:** configuration verification pending. These addresses do not establish successful role assignments, module bindings, ownership acceptance or explorer source verification. No mainnet deployment is listed.
-
 ### Deploying the contracts
 
 The entry point is [DeployIQOS](script/Deploy.s.sol). It deploys the modules, configures permissions and initiates ownership transfer.
