@@ -11,6 +11,7 @@ interface IOSTTransferModule {
     function getAdminCreateTransferRequestActionHash(TransferType transferType, address seller, address buyer, uint256 amount, uint256 pricePerOST, bytes32 referenceHash) external view returns (bytes32);
     function getAdminValidateSellerPaymentActionHash(uint256 id, bytes32 sellerReceiptHash) external view returns (bytes32);
     function getAdminConfirmOSTTransactionActionHash(uint256 id, bytes32 receiptHash) external view returns (bytes32);
+    function getAdminConfirmSellerPaymentAndReleaseActionHash(uint256 id, bytes32 sellerReceiptHash, bytes32 receiptHash) external view returns (bytes32);
     function ESCROW_TIMEOUT() external view returns (uint256);
     enum TransferStatus {
         None,
@@ -96,6 +97,7 @@ interface IOSTTransferModule {
     function reclaimExpiredEscrow(uint256 id) external;
 
     function adminConfirmOSTTransaction(uint256 id, bytes32 receiptHash) external;
+    function adminConfirmSellerPaymentAndRelease(uint256 id, bytes32 sellerReceiptHash, bytes32 receiptHash) external;
 
     function getAdminResolveTransferActionHash(
         uint256 id,
