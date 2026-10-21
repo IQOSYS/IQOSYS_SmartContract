@@ -21,6 +21,12 @@ interface IAdminMultisig {
     function requiredSignatures() external view returns (uint256);
     function signerEpoch() external view returns (uint256);
     function ACTION_APPROVAL_VALIDITY() external view returns (uint256);
+    function SIGNER_ROTATION_DELAY() external view returns (uint256);
+    function abortedSignerRotations(bytes32 actionHash) external view returns (bool);
+    function signerRotationReadyAt(address oldSigner, address newSigner, bytes32 referenceHash) external view returns (uint256);
+    function getAbortSignerRotationActionHash(address oldSigner, address newSigner, bytes32 referenceHash, bytes32 reasonHash)
+        external view returns (bytes32);
+    function abortSignerRotation(address oldSigner, address newSigner, bytes32 referenceHash, bytes32 reasonHash) external;
 
     function signerCount() external view returns (uint256);
     function isSigner(address signer) external view returns (bool);
