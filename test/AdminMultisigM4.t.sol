@@ -181,6 +181,7 @@ contract AdminMultisigM4Test is Test {
         multisig.approveAction(rotationHash);
         vm.prank(signer2);
         multisig.approveAction(rotationHash);
+        vm.warp(vm.getBlockTimestamp() + multisig.SIGNER_ROTATION_DELAY());
 
         vm.prank(owner);
         multisig.replaceSigner(signer3, signer4, referenceHash);

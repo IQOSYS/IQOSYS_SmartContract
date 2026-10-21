@@ -24,6 +24,11 @@ contract AdminMultisig is IAdminMultisig {
 
     uint256 public constant override ACTION_APPROVAL_VALIDITY = 7 days;
 
+    uint256 public constant override SIGNER_ROTATION_DELAY = 48 hours;
+    mapping(bytes32 => bool) public override abortedSignerRotations;
+
+    event SignerRotationAborted(bytes32 indexed actionHash, bytes32 indexed reasonHash, address indexed executedBy, uint256 timestamp);
+
     bool public override actionConsumerBootstrapLocked;
 
     address[] private signers;
@@ -212,7 +217,7 @@ contract AdminMultisig is IAdminMultisig {
 
         require(
 
-            _requiredSignatures > 0 && _requiredSignatures <= _signers.length,
+            _requiredSignatures >= 2 && _requiredSignatures <= _signers.length,
 
             "Invalid required signatures"
 
@@ -438,12 +443,19 @@ contract AdminMultisig is IAdminMultisig {
     /// reuse an old signature's time to skip a consumer's execution delay.
     function getActionQuorumReachedAt(bytes32 hash, uint256 threshold) external view override returns (uint256) {
         require(threshold >= requiredSignatures && threshold <= signers.length, "Invalid required approval count");
+        return _quorumReachedAtExcluding(hash, threshold, address(0));
+    }
+
+    function _quorumReachedAtExcluding(bytes32 hash, uint256 threshold, address excludedSigner)
+        private view returns (uint256)
+    {
         if (!isActionApprovedWithRequiredSignatures(hash, threshold)) return 0;
         uint256[] memory times = new uint256[](signers.length);
         uint256 count;
         ActionApproval storage approval = approvals[hash];
         for (uint256 i; i < signers.length; i++) {
             address signer = signers[i];
+            if (signer == excludedSigner) continue;
             if (approval.approvedAtEpoch[signer] != signerEpoch) continue;
             uint256 timestamp = approval.approvedAtTime[signer];
             uint256 j = count;
@@ -1211,6 +1223,13 @@ contract AdminMultisig is IAdminMultisig {
 
                 : requiredSignatures;
 
+        // Recovery never counts the departing signer, even toward the delay.
+        require(replacementRequiredSignatures >= 2, "Insufficient remaining signers");
+        require(!abortedSignerRotations[actionHash], "Signer rotation aborted");
+        uint256 quorumAt = _quorumReachedAtExcluding(actionHash, replacementRequiredSignatures, oldSigner);
+        require(quorumAt != 0, "Action not approved by remaining signers");
+        require(block.timestamp >= quorumAt + SIGNER_ROTATION_DELAY, "Signer rotation delay not elapsed");
+
         _consumeApprovedActionExcludingSigner(
 
             actionHash,
@@ -1269,6 +1288,43 @@ contract AdminMultisig is IAdminMultisig {
 
     }
 
+    /// @notice Returns zero if the attempt is aborted, consumed, stale or lacks quorum.
+    function signerRotationReadyAt(address oldSigner, address newSigner, bytes32 referenceHash)
+        external view override returns (uint256)
+    {
+        if (!isSigner[oldSigner] || newSigner == address(0) || isSigner[newSigner]
+            || referenceHash == bytes32(0)) return 0;
+        bytes32 hash = getReplaceSignerActionHash(oldSigner, newSigner, referenceHash);
+        if (abortedSignerRotations[hash]) return 0;
+        uint256 remaining = signers.length - 1;
+        uint256 threshold = requiredSignatures > remaining ? remaining : requiredSignatures;
+        if (threshold < 2) return 0;
+        uint256 quorumAt = _quorumReachedAtExcluding(hash, threshold, oldSigner);
+        return quorumAt == 0 ? 0 : quorumAt + SIGNER_ROTATION_DELAY;
+    }
+
+    function getAbortSignerRotationActionHash(address oldSigner, address newSigner, bytes32 referenceHash, bytes32 reasonHash)
+        public view override returns (bytes32)
+    {
+        return keccak256(abi.encode(address(this), block.chainid, "ABORT_ADMIN_SIGNER_ROTATION",
+            getReplaceSignerActionHash(oldSigner, newSigner, referenceHash), reasonHash));
+    }
+
+    /// @notice A separate current quorum can abort without waiting 48 hours.
+    /// The attempt stays cancelled permanently; retry with a fresh reference hash.
+    function abortSignerRotation(address oldSigner, address newSigner, bytes32 referenceHash, bytes32 reasonHash)
+        external override onlyAdmin
+    {
+        require(isSigner[oldSigner] && newSigner != address(0) && !isSigner[newSigner], "Invalid signer rotation");
+        require(referenceHash != bytes32(0) && reasonHash != bytes32(0), "Reference and reason required");
+        bytes32 hash = getReplaceSignerActionHash(oldSigner, newSigner, referenceHash);
+        require(!abortedSignerRotations[hash], "Signer rotation aborted");
+        require(!approvals[hash].consumed, "Signer rotation already executed");
+        _consumeApprovedAction(getAbortSignerRotationActionHash(oldSigner, newSigner, referenceHash, reasonHash), address(this));
+        abortedSignerRotations[hash] = true;
+        emit SignerRotationAborted(hash, reasonHash, msg.sender, block.timestamp);
+    }
+
     function getSetRequiredSignaturesActionHash(
 
         uint256 newRequiredSignatures,
@@ -1307,7 +1363,7 @@ contract AdminMultisig is IAdminMultisig {
 
         require(
 
-            newRequiredSignatures > 0 &&
+            newRequiredSignatures >= 2 &&
 
                 newRequiredSignatures <= signers.length,
 

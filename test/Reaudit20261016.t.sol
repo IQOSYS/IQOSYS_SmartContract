@@ -707,6 +707,7 @@ function _reviewCapitalReceived() internal returns (uint256 bsaId, uint256 reque
         vm.prank(owner); adminMultisig.approveProposalReplacement(r);
         bytes32 rotation=adminMultisig.getReplaceSignerActionHash(signer3,newSigner,SIGNER_ROTATION_REF);
         _approveActionForConsumerByTwoSigners(rotation,address(adminMultisig));
+        vm.warp(vm.getBlockTimestamp() + adminMultisig.SIGNER_ROTATION_DELAY());
         vm.prank(owner); adminMultisig.replaceSigner(signer3,newSigner,SIGNER_ROTATION_REF);
         vm.prank(signer2); adminMultisig.approveProposalReplacement(r);
         (,,address consumer,,,,,)=adminMultisig.getActionProposal(hash); assertEq(consumer,address(conversionModule));
@@ -786,10 +787,11 @@ function _reviewCapitalReceived() internal returns (uint256 bsaId, uint256 reque
         _awardIQS(alice,50); uint256 oldReady=_approveMigration(); vm.warp(oldReady-1);
         bytes32 rotation=adminMultisig.getReplaceSignerActionHash(signer3,newSigner,SIGNER_ROTATION_REF);
         _approveActionForConsumerByTwoSigners(rotation,address(adminMultisig));
+        vm.warp(vm.getBlockTimestamp() + adminMultisig.SIGNER_ROTATION_DELAY());
         vm.prank(owner); adminMultisig.replaceSigner(signer3,newSigner,SIGNER_ROTATION_REF);
         assertEq(holderMigrationController.migrationReadyAt(alice,aliceNewWallet,MIGRATION_REF),0);
         uint256 newReady=_approveMigration(); assertEq(newReady,block.timestamp+48 hours);
-        vm.warp(oldReady); vm.expectRevert("Migration delay not elapsed"); _migrate();
+        vm.expectRevert("Migration delay not elapsed"); _migrate();
         vm.warp(newReady); _migrate();
     }
     function testN05RenewedProposalNeedsNewSignaturesAndDelay() public {

@@ -1682,6 +1682,7 @@ function testOldSignerCannotApproveAfterRotation()
         );
 
     _approveActionByAllSigners(rotationHash);
+        vm.warp(vm.getBlockTimestamp() + adminMultisig.SIGNER_ROTATION_DELAY());
 
     vm.prank(owner);
 
@@ -1972,6 +1973,7 @@ function testLostSignerCanBeReplacedByRemainingSigners() public {
         adminMultisig.getApprovalCountExcluding(actionHash, signer3),
         2
     );
+        vm.warp(vm.getBlockTimestamp() + adminMultisig.SIGNER_ROTATION_DELAY());
 
     vm.prank(owner);
     adminMultisig.replaceSigner(signer3, newSigner, SIGNER_ROTATION_REF);
@@ -2075,6 +2077,7 @@ function testApprovalsFromPreviousSignerEpochDoNotCountAfterRotation() public {
 
     vm.prank(signer2);
     adminMultisig.approveAction(rotationHash);
+        vm.warp(vm.getBlockTimestamp() + adminMultisig.SIGNER_ROTATION_DELAY());
 
     vm.prank(owner);
     adminMultisig.replaceSigner(signer3, newSigner, SIGNER_ROTATION_REF);
