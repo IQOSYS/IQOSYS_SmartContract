@@ -152,6 +152,7 @@ contract DeployIQOS is Script {
         );
 
         // Register every multisig action consumer before locking bootstrap.
+        adminMultisig.setActionConsumer(address(tm), true);
         adminMultisig.setActionConsumer(address(bsaRegistry), true);
         adminMultisig.setActionConsumer(address(cm), true);
         adminMultisig.setActionConsumer(address(valuationAnchor), true);
@@ -182,6 +183,7 @@ contract DeployIQOS is Script {
         require(ac.hasRole(ac.ROLE_ANCHOR(), address(valuationAnchor)), "Valuation anchor role missing");
         require(ac.hasRole(ac.ROLE_ANCHOR(), address(gr)), "Governance anchor role missing");
         require(adminMultisig.isActionConsumer(address(gr)), "Governance action consumer missing");
+        require(adminMultisig.isActionConsumer(address(tm)), "Genesis registration action consumer missing");
         require(ac.hasRole(ac.ROLE_EMERGENCY(), address(emergencyController)), "Emergency role missing");
 
         ac.transferOwnership(safeOwner);

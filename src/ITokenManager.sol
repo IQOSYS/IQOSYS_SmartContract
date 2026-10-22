@@ -4,6 +4,31 @@ pragma solidity ^0.8.20;
 /// @title Interface for Token Manager Module
 /// @notice AMF production model: IQS are non-transferable BSA rights, OST are ordinary shares moved only by controlled modules.
 interface ITokenManager {
+    struct InitialShareRegistration {
+        bytes32 allocationsHash;
+        bytes32 registerSha256;
+        uint256 declaredTotal;
+        uint256 holderCount;
+        uint256 requestedAt;
+        uint256 executedAt;
+        address requestedBy;
+        bool aborted;
+    }
+
+    function INITIAL_SHARE_REGISTRATION_DELAY() external view returns (uint256);
+    function initialShareRegistrationLocked() external view returns (bool);
+    function pendingInitialShareRegistrationId() external view returns (uint256);
+    function initialShareRegistrationCount() external view returns (uint256);
+    function initialShareRegistrations(uint256 id) external view returns (InitialShareRegistration memory);
+    function getInitialShareRegistrationActionHash(uint256 id) external view returns (bytes32);
+    function initialShareRegistrationReadyAt(uint256 id) external view returns (uint256);
+    function requestInitialShareRegistration(address[] calldata holders, uint256[] calldata quantities,
+        uint256 declaredTotal, bytes32 registerSha256) external returns (uint256);
+    function registerInitialShares(uint256 id, address[] calldata holders, uint256[] calldata quantities,
+        uint256 declaredTotal, bytes32 registerSha256) external;
+    function getAbortInitialShareRegistrationActionHash(uint256 id, bytes32 reasonHash) external view returns (bytes32);
+    function abortInitialShareRegistration(uint256 id, bytes32 reasonHash) external;
+
     // -------------------------------------------------------------------------
     // IQS Token / BSA rights
     // -------------------------------------------------------------------------

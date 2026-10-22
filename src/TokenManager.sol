@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 
 import "./ITokenManager.sol";
 import "./IAccessControl.sol";
+import "./IAdminMultisig.sol";
 
 /// @dev OSTTransferModule exposes immutable escrowAddress() and tokenManager() getters.
 ///      Verifying both during bootstrap prevents accidentally excluding a real holder.
@@ -99,6 +100,22 @@ contract TokenManager is
     uint256 public registeredHolderCount;
     mapping(address => bool) public hasHolderSlot;
     mapping(address => bool) public retiredHolderWallet;
+
+    uint256 public constant override INITIAL_SHARE_REGISTRATION_DELAY = 48 hours;
+    bool public override initialShareRegistrationLocked;
+    uint256 public override pendingInitialShareRegistrationId;
+    uint256 public override initialShareRegistrationCount;
+    mapping(uint256 => InitialShareRegistration) private _initialShareRegistrations;
+
+    /// @dev Consumers relay this event to the existing all-admin email/SMS alert outbox.
+    event InitialShareRegistrationRequested(uint256 indexed id, bytes32 indexed actionHash,
+        bytes32 indexed registerSha256, bytes32 allocationsHash, uint256 declaredTotal,
+        uint256 holderCount, address requestedBy, uint256 timestamp);
+    event InitialSharesRegistered(uint256 indexed id, bytes32 indexed actionHash,
+        bytes32 indexed registerSha256, uint256 declaredTotal, uint256 holderCount,
+        address executedBy, uint256 timestamp);
+    event InitialShareRegistrationAborted(uint256 indexed id, bytes32 indexed actionHash,
+        bytes32 indexed reasonHash, address executedBy, uint256 timestamp);
 
     event HolderSlotRegistered(address indexed wallet, uint256 totalSlots);
     event HolderSlotMigrated(address indexed oldWallet, address indexed newWallet);
@@ -603,6 +620,7 @@ contract TokenManager is
         whenNotPaused
         nonReentrant
     {
+        require(pendingInitialShareRegistrationId == 0, "Initial registration pending");
         require(
             account != address(0),
             "Invalid account"
@@ -980,6 +998,154 @@ contract TokenManager is
             ostAmount,
             referenceHash
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Genesis registration of the complete existing ordinary-share register
+    // -------------------------------------------------------------------------
+
+    function initialShareRegistrations(uint256 id) external view override returns (InitialShareRegistration memory) {
+        return _initialShareRegistrations[id];
+    }
+
+    /// @notice Commit to a complete, sorted register before requesting multisig signatures.
+    /// @dev The hash is SHA-256 of the exact signed off-chain extract. Its completeness,
+    ///      signature and one verified canonical wallet per holder are checked off-chain.
+    function requestInitialShareRegistration(address[] calldata holders, uint256[] calldata quantities,
+        uint256 declaredTotal, bytes32 registerSha256)
+        external override onlyAdmin whenNotPaused nonReentrant returns (uint256 id)
+    {
+        require(!initialShareRegistrationLocked, "Initial registration locked");
+        require(pendingInitialShareRegistrationId == 0, "Initial registration pending");
+        IAdminMultisig multisig = _initialRegistrationMultisig();
+        require(multisig.isSigner(msg.sender), "Caller is not a signer");
+        require(multisig.isActionConsumer(address(this)), "TokenManager consumer not registered");
+        _validateInitialShares(holders, quantities, declaredTotal, registerSha256);
+        id = ++initialShareRegistrationCount;
+        _initialShareRegistrations[id] = InitialShareRegistration({
+            allocationsHash: keccak256(abi.encode(holders, quantities)), registerSha256: registerSha256,
+            declaredTotal: declaredTotal, holderCount: holders.length, requestedAt: block.timestamp,
+            executedAt: 0, requestedBy: msg.sender, aborted: false
+        });
+        pendingInitialShareRegistrationId = id;
+        emit InitialShareRegistrationRequested(id, getInitialShareRegistrationActionHash(id),
+            registerSha256, _initialShareRegistrations[id].allocationsHash, declaredTotal,
+            holders.length, msg.sender, block.timestamp);
+    }
+
+    function getInitialShareRegistrationActionHash(uint256 id) public view override returns (bytes32) {
+        InitialShareRegistration storage registration = _initialShareRegistrations[id];
+        require(id != 0 && id <= initialShareRegistrationCount, "Initial registration not found");
+        return keccak256(abi.encode(address(this), block.chainid, "INITIAL_SHARE_REGISTRATION", id,
+            registration.allocationsHash, registration.declaredTotal, registration.registerSha256));
+    }
+
+    function initialShareRegistrationReadyAt(uint256 id) external view override returns (uint256) {
+        if (initialShareRegistrationLocked || id == 0 || pendingInitialShareRegistrationId != id) return 0;
+        IAdminMultisig multisig = _initialRegistrationMultisig();
+        uint256 quorumAt = multisig.getActionQuorumReachedAt(getInitialShareRegistrationActionHash(id),
+            multisig.requiredSignatures());
+        if (quorumAt != 0 && quorumAt < _initialShareRegistrations[id].requestedAt) {
+            quorumAt = _initialShareRegistrations[id].requestedAt;
+        }
+        return quorumAt == 0 ? 0 : quorumAt + INITIAL_SHARE_REGISTRATION_DELAY;
+    }
+
+    /// @notice Issue the entire approved existing register atomically and permanently close genesis.
+    function registerInitialShares(uint256 id, address[] calldata holders, uint256[] calldata quantities,
+        uint256 declaredTotal, bytes32 registerSha256) external override onlyAdmin whenNotPaused nonReentrant
+    {
+        require(!initialShareRegistrationLocked, "Initial registration locked");
+        require(id != 0 && pendingInitialShareRegistrationId == id, "Initial registration not pending");
+        InitialShareRegistration storage registration = _initialShareRegistrations[id];
+        require(registration.allocationsHash == keccak256(abi.encode(holders, quantities))
+            && registration.declaredTotal == declaredTotal && registration.registerSha256 == registerSha256,
+            "Initial registration data mismatch");
+        _validateInitialShares(holders, quantities, declaredTotal, registerSha256);
+        IAdminMultisig multisig = _initialRegistrationMultisig();
+        bytes32 actionHash = getInitialShareRegistrationActionHash(id);
+        uint256 threshold = multisig.requiredSignatures();
+        uint256 quorumAt = multisig.getActionQuorumReachedAt(actionHash, threshold);
+        require(quorumAt != 0, "Action not approved");
+        if (quorumAt < registration.requestedAt) quorumAt = registration.requestedAt;
+        require(block.timestamp >= quorumAt + INITIAL_SHARE_REGISTRATION_DELAY, "Initial registration delay not elapsed");
+        _requireInitialRegistrationIntent(multisig, actionHash);
+        multisig.consumeApprovedActionWithRequiredSignatures(actionHash, threshold);
+
+        initialShareRegistrationLocked = true;
+        pendingInitialShareRegistrationId = 0;
+        registration.executedAt = block.timestamp;
+        totalSupplyOST = declaredTotal;
+        for (uint256 i; i < holders.length; i++) {
+            address holder = holders[i];
+            _registerHolderSlot(holder);
+            _balancesOST[holder] += quantities[i];
+            _syncOSTHolder(holder);
+            emit MintOST(holder, quantities[i], registerSha256, block.timestamp);
+            emit TransferOST(address(0), holder, quantities[i]);
+        }
+        emit InitialSharesRegistered(id, actionHash, registerSha256, declaredTotal, holders.length, msg.sender, block.timestamp);
+    }
+
+    function getAbortInitialShareRegistrationActionHash(uint256 id, bytes32 reasonHash)
+        public view override returns (bytes32)
+    {
+        return keccak256(abi.encode(address(this), block.chainid, "ABORT_INITIAL_SHARE_REGISTRATION",
+            getInitialShareRegistrationActionHash(id), reasonHash));
+    }
+
+    /// @notice A separate quorum can abort at any time before execution, including while paused.
+    /// A retry uses a fresh attempt ID and new approvals, even for the same signed extract.
+    function abortInitialShareRegistration(uint256 id, bytes32 reasonHash) external override onlyAdmin nonReentrant {
+        require(!initialShareRegistrationLocked, "Initial registration locked");
+        require(id != 0 && pendingInitialShareRegistrationId == id, "Initial registration not pending");
+        require(reasonHash != bytes32(0), "Reason hash required");
+        IAdminMultisig multisig = _initialRegistrationMultisig();
+        bytes32 actionHash = getAbortInitialShareRegistrationActionHash(id, reasonHash);
+        _requireInitialRegistrationIntent(multisig, actionHash);
+        multisig.consumeApprovedActionWithRequiredSignatures(actionHash, multisig.requiredSignatures());
+        _initialShareRegistrations[id].aborted = true;
+        pendingInitialShareRegistrationId = 0;
+        emit InitialShareRegistrationAborted(id, getInitialShareRegistrationActionHash(id), reasonHash, msg.sender, block.timestamp);
+    }
+
+    function _initialRegistrationMultisig() private view returns (IAdminMultisig multisig) {
+        address controller = accessControl.adminSignerController();
+        require(controller != address(0), "Admin multisig not configured");
+        multisig = IAdminMultisig(controller);
+        require(multisig.signerCount() == 3 && multisig.requiredSignatures() >= 2, "Initial registration requires 2-of-3");
+    }
+
+    function _requireInitialRegistrationIntent(IAdminMultisig multisig, bytes32 actionHash) private view {
+        (bool exists,, address consumer, bytes4 selector, bytes32 calldataHash,,,) = multisig.getActionProposal(actionHash);
+        require(exists && consumer == address(this) && selector == msg.sig && calldataHash == keccak256(msg.data),
+            "Initial registration intent mismatch");
+    }
+
+    function _validateInitialShares(address[] calldata holders, uint256[] calldata quantities,
+        uint256 declaredTotal, bytes32 registerSha256) private view
+    {
+        require(totalSupplyOST == 0, "Initial registration requires zero OST supply");
+        require(ostEscrowAddress != address(0), "OST escrow not configured");
+        require(registerSha256 != bytes32(0), "Register SHA-256 required");
+        require(declaredTotal != 0, "Declared total required");
+        require(holders.length != 0 && holders.length <= MAX_REGISTERED_HOLDERS, "Invalid initial holder count");
+        require(holders.length == quantities.length, "Initial register length mismatch");
+        uint256 total;
+        uint256 newSlots;
+        address previous;
+        for (uint256 i; i < holders.length; i++) {
+            address holder = holders[i];
+            require(holder > previous, "Initial holders must be unique and sorted");
+            require(holder != ostEscrowAddress && !retiredHolderWallet[holder], "Invalid canonical holder");
+            require(quantities[i] != 0, "Initial quantity required");
+            accessControl.onlyValidSender(holder);
+            if (!hasHolderSlot[holder]) newSlots++;
+            total += quantities[i];
+            previous = holder;
+        }
+        require(total == declaredTotal, "Initial register total mismatch");
+        require(registeredHolderCount + newSlots <= MAX_REGISTERED_HOLDERS, "Holder cap reached");
     }
 
     // -------------------------------------------------------------------------

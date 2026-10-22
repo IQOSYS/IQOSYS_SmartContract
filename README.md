@@ -16,7 +16,7 @@ IQOSYS manages the lifecycle from warrant registration and rights allocation to 
 | **IQS** | Whole, non-transferable subscription rights awarded under a BSA. Exercise burns IQS and issues an equal quantity of OST. |
 | **OST** | On-chain representation of ordinary shares, held in a controlled ledger and transferred through the settlement module. |
 
-The custom ledger does not implement the general-purpose ERC-20 interface. OST supply starts at zero; issuance follows the approved exercise process.
+The custom ledger does not implement the general-purpose ERC-20 interface. OST supply starts at zero. Existing shares can be registered once through the approved genesis import; subsequent issuance follows the approved exercise process.
 
 The contracts record authorized actions and evidence references. Eligibility checks, signed agreements, bank payments and company-law formalities take place off-chain. Their completion cannot be inferred from an on-chain record alone.
 
@@ -83,6 +83,12 @@ The system uses dedicated contracts for authorization, accounting, settlement an
 
 Approved registration records the warrant's terms and maximum allocation. Subsequent approved awards credit IQS to the holder and reduce the unawarded allocation. Registration does not mint the full allocation; expiry and cancellation update the remaining rights.
 
+### Existing-share registration
+
+Before any OST is issued, administrators can register all existing shares and their current holders in a single transaction. The approval binds the complete address/quantity list, declared total and SHA-256 of the signed off-chain register extract. Registration requires the configured quorum (at least two of three signers), a 48-hour delay, and compliance with the shared permanent 149-holder cap. A separate quorum can abort before execution. Successful registration permanently locks this import path.
+
+See [Initial share registration](docs/initial-share-registration.md) for the approval workflow, canonical-address checks and platform alert integration.
+
 ### IQS exercise and OST issuance
 
 A holder requests exercise against an eligible BSA and available IQS. After approval and capital confirmation, finalization burns the exercised IQS, updates the BSA record and issues the same number of OST in one transaction.
@@ -108,6 +114,7 @@ IQOSYS uses permissioned administration. Ownership, multisig signer membership, 
 | **Bound approvals** | A proposal binds its consumer, function selector, calldata hash and deadline. Proposal creation does not count as an approval. |
 | **Single consumption** | Only the bound consumer can consume an approved action, once. Approvals also depend on signer epoch and proposal lifecycle. |
 | **Emergency controls** | An administrator can pause an allowed scope immediately. Resuming requires the corresponding quorum-approved controller action. |
+| **Existing shares** | Genesis-only registration binds the complete register, verifies its declared total and executes atomically after quorum plus 48 hours. A separate quorum can abort, including while paused. |
 | **Wallet recovery** | Migration requires at least two approvals, honors a higher configured threshold and enforces a 48-hour delay from effective quorum. Open transfers block migration. |
 | **Evidence integrity** | Terminal exercise and transfer receipt hashes are write-once. Document corrections preserve prior evidence through linked supersession where applicable. |
 
@@ -139,6 +146,8 @@ OST in transfer escrow remains part of issued supply. Read all quantities at the
 ## Testing
 
 The [Foundry suite](test/) covers authorization, multisig lifecycle, warrant accounting, exercise, transfer settlement, expiry and wallet recovery. Regression suites include [AtomicOSTSettlement.t.sol](test/AtomicOSTSettlement.t.sol) and [Reaudit20261016.t.sol](test/Reaudit20261016.t.sol).
+
+The [initial registration regression suite](test/InitialShareRegistration.t.sol) covers complete imports, declared totals, eligibility, the holder cap, delay, Abort and approval invalidation.
 
 Run tests against the exact revision being reviewed.
 
