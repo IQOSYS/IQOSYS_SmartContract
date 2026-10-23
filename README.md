@@ -161,19 +161,19 @@ Recorded testnet module addresses:
 
 | Contract | Address |
 | --- | --- |
-| IQOS | [`0x8581275778dfBe580efD260CB82E4d8BA3779B9F`](https://amoy.polygonscan.com/address/0x8581275778dfBe580efD260CB82E4d8BA3779B9F) |
-| AccessControl | [`0xC4739d784488d84bD8c84475A851FCA8D6A0fC77`](https://amoy.polygonscan.com/address/0xC4739d784488d84bD8c84475A851FCA8D6A0fC77) |
-| AdminMultisig | [`0xb9f85a46a025Ff9170a074d8f1dB8ed5c1d2FFd8`](https://amoy.polygonscan.com/address/0xb9f85a46a025Ff9170a074d8f1dB8ed5c1d2FFd8) |
-| TokenManager | [`0xC6E8b1D5C8667A43985ddBeFc7e859F50f29C9D0`](https://amoy.polygonscan.com/address/0xC6E8b1D5C8667A43985ddBeFc7e859F50f29C9D0) |
-| BSARegistry | [`0x3869dAc57Ae037285f1F934AE12BccDDf2167da3`](https://amoy.polygonscan.com/address/0x3869dAc57Ae037285f1F934AE12BccDDf2167da3) |
-| ConversionModule | [`0x55C62DBAB6a60BeCd338853388aa87153d41090d`](https://amoy.polygonscan.com/address/0x55C62DBAB6a60BeCd338853388aa87153d41090d) |
-| OSTTransferModule | [`0x081F59A62347E3eecf9B575E746fEE1567592fDc`](https://amoy.polygonscan.com/address/0x081F59A62347E3eecf9B575E746fEE1567592fDc) |
-| HashRegistry | [`0x1e766B58335C1Df844396e3FBc12741C3B5E8865`](https://amoy.polygonscan.com/address/0x1e766B58335C1Df844396e3FBc12741C3B5E8865) |
-| GovernanceRegistry | [`0x025595CeC5481Fc1ce0aE4A72668274451BB3d31`](https://amoy.polygonscan.com/address/0x025595CeC5481Fc1ce0aE4A72668274451BB3d31) |
-| ValuationAnchor | [`0x9Ea8d4e05B83E4092a9C0F9d88C4e514702dC579`](https://amoy.polygonscan.com/address/0x9Ea8d4e05B83E4092a9C0F9d88C4e514702dC579) |
-| EmergencyController | [`0x75E3DBFf70cc0488ED5010911d7E6455040CA1fB`](https://amoy.polygonscan.com/address/0x75E3DBFf70cc0488ED5010911d7E6455040CA1fB) |
-| HolderMigrationController | [`0x96bcFC9B740563B78CF02674833D2620a14240bA`](https://amoy.polygonscan.com/address/0x96bcFC9B740563B78CF02674833D2620a14240bA) |
-| TokenOperatorController | [`0xCea51DEbE0e878e8692CbB2b5E117CCe9646a866`](https://amoy.polygonscan.com/address/0xCea51DEbE0e878e8692CbB2b5E117CCe9646a866) |
+| IQOS | [`0x77FdD1F45Eb1FE2B626EA9b53325a69e55078941`](https://amoy.polygonscan.com/address/0x77FdD1F45Eb1FE2B626EA9b53325a69e55078941) |
+| AccessControl | [`0xB86ee83BE68a046da3b28aC7ca5671548243a62c`](https://amoy.polygonscan.com/address/0xB86ee83BE68a046da3b28aC7ca5671548243a62c) |
+| AdminMultisig | [`0x07DE296f7BB34c3677d3Bef70be4a3D98E67Bc6a`](https://amoy.polygonscan.com/address/0x07DE296f7BB34c3677d3Bef70be4a3D98E67Bc6a) |
+| TokenManager | [`0xE86Af883E35baaaED12644DfAe658516b1B478B4`](https://amoy.polygonscan.com/address/0xE86Af883E35baaaED12644DfAe658516b1B478B4) |
+| BSARegistry | [`0x0E73BA0139706fC406f3842bA4F9C5b5816FF46f`](https://amoy.polygonscan.com/address/0x0E73BA0139706fC406f3842bA4F9C5b5816FF46f) |
+| ConversionModule | [`0x9870426c1263609E4000626C8A0311A69EFd367a`](https://amoy.polygonscan.com/address/0x9870426c1263609E4000626C8A0311A69EFd367a) |
+| OSTTransferModule | [`0x23BEb05b800f834fafE696611Ea7cF80100A0Fd9`](https://amoy.polygonscan.com/address/0x23BEb05b800f834fafE696611Ea7cF80100A0Fd9) |
+| HashRegistry | [`0xEF6631a33940a2Df04489ce261518b38c385a520`](https://amoy.polygonscan.com/address/0xEF6631a33940a2Df04489ce261518b38c385a520) |
+| GovernanceRegistry | [`0x5252dC4E14a7acC12268600591D8769EfFC3C142`](https://amoy.polygonscan.com/address/0x5252dC4E14a7acC12268600591D8769EfFC3C142) |
+| ValuationAnchor | [`0xf57E8aA8A3C1e707a9298d96a99f5Fa7B06B1D2c`](https://amoy.polygonscan.com/address/0xf57E8aA8A3C1e707a9298d96a99f5Fa7B06B1D2c) |
+| EmergencyController | [`0xf2Cc78Bcc1DbBc20F81D32934274f9BBded9e63b`](https://amoy.polygonscan.com/address/0xf2Cc78Bcc1DbBc20F81D32934274f9BBded9e63b) |
+| HolderMigrationController | [`0xe193b8B630d524227a1248D2c5F7565aa255565D`](https://amoy.polygonscan.com/address/0xe193b8B630d524227a1248D2c5F7565aa255565D) |
+| TokenOperatorController | [`0x3D07681Da6EC446F08f66CE9a4aA7A1EE8Cf730B`](https://amoy.polygonscan.com/address/0x3D07681Da6EC446F08f66CE9a4aA7A1EE8Cf730B) |
 
 ### Deploying the contracts
 
