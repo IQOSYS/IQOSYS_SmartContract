@@ -1,58 +1,74 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 import "./AccessControl.sol";
 import "./TokenManager.sol";
-import "./ProfileManager.sol";
-import "./P2PModule.sol";
-import "./OrderBookModule.sol";
-import "./TradeModule.sol";
+import "./OSTTransferModule.sol";
 import "./ConversionModule.sol";
 import "./HashRegistry.sol";
-import "./DAO.sol";
+import "./AdminMultisig.sol";
+import "./BSARegistry.sol";
+import "./ValuationAnchor.sol";
+import "./GovernanceRegistry.sol";
+import "./EmergencyController.sol";
+import "./HolderMigrationController.sol";
+import "./TokenOperatorController.sol";
 
 /// @title IQOS Core
-/// @notice Contrat principal qui référence tous les modules déployés séparément
+/// @notice Main aggregator contract referencing the deployed IQOS AMF modules.
+/// @dev This contract does not execute business logic. It is a registry/entry point for deployed modules.
 contract IQOS {
-    AccessControl   public accessControl;
-    TokenManager    public tokenManager;
-    ProfileManager  public profileManager;
-    P2PModule       public p2pModule;
-    OrderBookModule public orderBookModule;
-    TradeModule     public tradeModule;
+    AccessControl public accessControl;
+    TokenManager public tokenManager;
+    OSTTransferModule public ostTransferModule;
     ConversionModule public conversionModule;
-    HashRegistry    public hashRegistry;
-    DAO             public dao;
+    HashRegistry public hashRegistry;
+    AdminMultisig public adminMultisig;
+    BSARegistry public bsaRegistry;
+    ValuationAnchor public valuationAnchor;
+    GovernanceRegistry public governanceRegistry;
+    EmergencyController public emergencyController;
+    HolderMigrationController public holderMigrationController;
+    TokenOperatorController public tokenOperatorController;
 
-    /// @notice Initialise le core avec les adresses des modules externes
-    /// @param _accessControl Adresse du contrat AccessControl
-    /// @param _tokenManager Adresse du contrat TokenManager
-    /// @param _profileManager Adresse du contrat ProfileManager
-    /// @param _p2pModule Adresse du contrat P2PModule
-    /// @param _orderBookModule Adresse du contrat OrderBookModule
-    /// @param _tradeModule Adresse du contrat TradeModule
-    /// @param _conversionModule Adresse du contrat ConversionModule
-    /// @param _hashRegistry Adresse du contrat HashRegistry
-    /// @param _dao Adresse du contrat DAO
     constructor(
         address _accessControl,
         address _tokenManager,
-        address _profileManager,
-        address _p2pModule,
-        address _orderBookModule,
-        address _tradeModule,
+        address _ostTransferModule,
         address _conversionModule,
         address _hashRegistry,
-        address _dao
+        address _adminMultisig,
+        address _bsaRegistry,
+        address _valuationAnchor,
+        address _governanceRegistry,
+        address _emergencyController,
+        address _holderMigrationController,
+        address _tokenOperatorController
     ) {
-        accessControl     = AccessControl(_accessControl);
-        tokenManager      = TokenManager(_tokenManager);
-        profileManager    = ProfileManager(_profileManager);
-        p2pModule         = P2PModule(_p2pModule);
-        orderBookModule   = OrderBookModule(_orderBookModule);
-        tradeModule       = TradeModule(_tradeModule);
-        conversionModule  = ConversionModule(_conversionModule);
-        hashRegistry      = HashRegistry(_hashRegistry);
-        dao               = DAO(_dao);
+        require(_accessControl != address(0), "Invalid access control");
+        require(_tokenManager != address(0), "Invalid token manager");
+        require(_ostTransferModule != address(0), "Invalid OST transfer module");
+        require(_conversionModule != address(0), "Invalid conversion module");
+        require(_hashRegistry != address(0), "Invalid hash registry");
+        require(_adminMultisig != address(0), "Invalid admin multisig");
+        require(_bsaRegistry != address(0), "Invalid BSA registry");
+        require(_valuationAnchor != address(0), "Invalid valuation anchor");
+        require(_governanceRegistry != address(0), "Invalid governance registry");
+        require(_emergencyController != address(0), "Invalid emergency controller");
+        require(_holderMigrationController != address(0), "Invalid holder migration controller");
+        require(_tokenOperatorController != address(0), "Invalid token operator controller");
+
+        accessControl = AccessControl(_accessControl);
+        tokenManager = TokenManager(_tokenManager);
+        ostTransferModule = OSTTransferModule(_ostTransferModule);
+        conversionModule = ConversionModule(_conversionModule);
+        hashRegistry = HashRegistry(_hashRegistry);
+        adminMultisig = AdminMultisig(_adminMultisig);
+        bsaRegistry = BSARegistry(_bsaRegistry);
+        valuationAnchor = ValuationAnchor(_valuationAnchor);
+        governanceRegistry = GovernanceRegistry(_governanceRegistry);
+        emergencyController = EmergencyController(_emergencyController);
+        holderMigrationController = HolderMigrationController(_holderMigrationController);
+        tokenOperatorController = TokenOperatorController(_tokenOperatorController);
     }
 }
